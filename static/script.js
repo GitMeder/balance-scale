@@ -3,13 +3,13 @@
   const joinForm = document.getElementById("joinForm");
   const joinHint = document.getElementById("joinHint");
   const nameInput = document.getElementById("playerName");
-  const guessForm = document.getElementById("guessForm");
-  const guessInput = document.getElementById("guessInput");
-  const submitGuess = document.getElementById("submitGuess");
   const statusMessage = document.getElementById("statusMessage");
   const resultMessage = document.getElementById("resultMessage");
   const roundInfo = document.getElementById("roundInfo");
   const playersList = document.getElementById("playersList");
+  const numberGridSection = document.getElementById("numberGridSection");
+  const numberGrid = document.getElementById("numberGrid");
+  const selectedNumberLabel = document.getElementById("selectedNumberLabel");
   const hostPanel = document.getElementById("hostPanel");
   const hostStatus = document.getElementById("hostStatus");
   const hostHint = document.getElementById("hostHint");
@@ -49,6 +49,8 @@
     roundActive: false,
     minPlayers: 5,
     rules: DEFAULT_RULES,
+    selectedNumber: null,
+    guessEnabled: false,
   };
 
   if (!socket) {
@@ -74,18 +76,83 @@
     }
   }
 
-  function setGuessEnabled(enabled) {
-    const allowInput = enabled && !state.isEliminated;
-    submitGuess.disabled = !allowInput;
-    guessInput.disabled = !allowInput;
-    if (!allowInput && !state.hasSubmitted) {
-      guessInput.value = "";
+  const numberButtons = new Map();
+
+  function updateNumberGridUI() {
+    if (!numberGridSection || !numberGrid) {
+      return;
     }
+
+    if (selectedNumberLabel) {
+      selectedNumberLabel.textContent = Number.isInteger(state.selectedNumber)
+        ? String(state.selectedNumber)
+        : "–";
+    }
+
+    const enableButtons = state.guessEnabled && !state.hasSubmitted && !state.isEliminated;
+
+    numberButtons.forEach((btn, value) => {
+      const isSelected = state.selectedNumber === value;
+      btn.classList.toggle("selected", isSelected);
+      btn.disabled = !enableButtons;
+      btn.classList.toggle("disabled", !enableButtons && !isSelected);
+    });
   }
 
-  function ensureGuessFormVisible() {
-    guessForm.classList.remove("hidden");
+  function setGuessEnabled(enabled) {
+    state.guessEnabled = Boolean(enabled) && !state.isEliminated;
+    updateNumberGridUI();
   }
+
+  function clearNumberHighlights() {
+    numberButtons.forEach((btn) => {
+      btn.classList.remove("target", "choice-self", "choice-other");
+    });
+  }
+
+  function handleNumberClick(value) {
+    if (
+      !Number.isInteger(value) ||
+      !socket ||
+      !state.guessEnabled ||
+      state.hasSubmitted ||
+      state.isEliminated
+    ) {
+      return;
+    }
+
+    state.selectedNumber = value;
+    state.hasSubmitted = true;
+    setGuessEnabled(false);
+
+    setStatus("Waiting for other players to submit…");
+    setResult("Guess locked in. Waiting for the round to resolve…", "info");
+
+    socket.emit("submit_number", {
+      lobby_id: state.lobbyId,
+      number: value,
+    });
+  }
+
+  function initializeNumberGrid() {
+    if (!numberGrid) {
+      return;
+    }
+    numberGrid.innerHTML = "";
+    for (let value = 0; value <= 100; value += 1) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "number-cell disabled";
+      btn.dataset.value = String(value);
+      btn.textContent = value.toString();
+      btn.addEventListener("click", () => handleNumberClick(value));
+      numberGrid.appendChild(btn);
+      numberButtons.set(value, btn);
+    }
+    updateNumberGridUI();
+  }
+
+  initializeNumberGrid();
 
   function formatNumber(value) {
     if (typeof value !== "number" || Number.isNaN(value)) {
@@ -100,6 +167,8 @@
     targetValue.textContent = "–";
     choicesBody.innerHTML = "";
     choicesContainer.classList.add("hidden");
+    clearNumberHighlights();
+    updateNumberGridUI();
   }
 
   const modalQueue = [];
@@ -236,6 +305,34 @@
     averageValue.textContent = averageText || "–";
     targetValue.textContent = targetText || "–";
     renderChoiceRows(payload.choices, payload.winners, payload.disqualified);
+
+    clearNumberHighlights();
+
+    if (typeof payload.target === "number" && Number.isFinite(payload.target)) {
+      const targetValue = Math.round(payload.target);
+      if (numberButtons.has(targetValue)) {
+        numberButtons.get(targetValue).classList.add("target");
+      }
+    }
+
+    if (payload.choices && typeof payload.choices === "object") {
+      Object.entries(payload.choices).forEach(([name, value]) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return;
+        }
+        const intValue = Math.max(0, Math.min(100, Math.round(numeric)));
+        const button = numberButtons.get(intValue);
+        if (!button) {
+          return;
+        }
+        if (name === state.playerName) {
+          button.classList.add("choice-self");
+        } else {
+          button.classList.add("choice-other");
+        }
+      });
+    }
   }
 
   function normalizePlayersList(data = []) {
@@ -496,8 +593,13 @@
 
   function handleJoinSuccess() {
     joinScreen.classList.add("hidden");
-    ensureGuessFormVisible();
+    if (numberGridSection) {
+      numberGridSection.classList.remove("hidden");
+    }
+    state.selectedNumber = null;
+    state.hasSubmitted = false;
     setGuessEnabled(false);
+    updateNumberGridUI();
     setStatus(`Joined lobby "${state.lobbyId}". Waiting for other players…`);
     setResult("Waiting for the first round…", "info");
     resetRoundBreakdown();
@@ -534,34 +636,6 @@
     } else {
       setStatus("Connecting to server…");
     }
-  });
-
-  guessForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (!socket || state.hasSubmitted || state.isEliminated) {
-      return;
-    }
-
-    const numericValue = Number(guessInput.value.trim());
-    if (
-      Number.isNaN(numericValue) ||
-      numericValue < 0 ||
-      numericValue > 100 ||
-      !Number.isInteger(numericValue)
-    ) {
-      setResult("Enter a whole number between 0 and 100 before submitting.", "negative");
-      return;
-    }
-
-    socket.emit("submit_number", {
-      lobby_id: state.lobbyId,
-      number: Math.trunc(numericValue),
-    });
-
-    state.hasSubmitted = true;
-    setGuessEnabled(false);
-    setStatus("Waiting for other players to submit…");
-    setResult("Guess locked in. Waiting for the round to resolve…", "info");
   });
 
   startRoundBtn.addEventListener("click", emitHostStartRequest);
@@ -648,10 +722,8 @@
     state.lobbyState = "running";
     state.roundNumber = typeof payload.round === "number" ? payload.round : state.roundNumber + 1;
     resetRoundBreakdown();
-    if (!state.isEliminated) {
-      setGuessEnabled(true);
-      guessInput.focus();
-    }
+    state.selectedNumber = null;
+    setGuessEnabled(true);
 
     updateRoundDetails(payload);
     if (payload.players) {
