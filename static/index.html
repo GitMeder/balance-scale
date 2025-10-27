@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Balance Scale</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: #f6f9fc;
+        color: #1f2933;
+      }
+
+      .container {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+
+      header h1 {
+        margin: 0 0 8px;
+        font-size: 2rem;
+        letter-spacing: 0.01em;
+      }
+
+      header p {
+        margin: 0;
+        color: #52606d;
+      }
+
+      .rules-panel {
+        margin-top: 12px;
+        padding: 16px;
+        border-radius: 12px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+      }
+
+      .rules-label {
+        margin: 0 0 8px;
+        font-size: 0.85rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #64748b;
+      }
+
+      .rules-list {
+        margin: 0;
+        padding-left: 20px;
+        color: #475569;
+        line-height: 1.5;
+      }
+
+      .rules-list li + li {
+        margin-top: 4px;
+      }
+
+      .game-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 24px;
+        margin-top: 32px;
+      }
+
+      .panel {
+        background: #ffffff;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 15px 35px rgba(15, 23, 42, 0.08);
+        display: flex;
+        flex-direction: column;
+        min-height: 220px;
+      }
+
+      .panel h2 {
+        margin: 0 0 12px;
+        font-size: 1.2rem;
+        color: #0b7285;
+      }
+
+      .status {
+        font-weight: 600;
+        margin-bottom: 12px;
+      }
+
+      #playersList {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .player-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: #f1f5f9;
+      }
+
+      .player-row.me {
+        background: #e0f2fe;
+        border: 1px solid #38bdf8;
+      }
+
+      .player-row.eliminated {
+        opacity: 0.6;
+      }
+
+      .player-name {
+        font-weight: 600;
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .player-score {
+        font-variant-numeric: tabular-nums;
+        padding-left: 16px;
+        font-weight: 500;
+        color: #0f172a;
+      }
+
+      .host-badge {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        background: #0ea5e9;
+        color: white;
+        padding: 2px 6px;
+        border-radius: 999px;
+        letter-spacing: 0.05em;
+      }
+
+      .bot-badge {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        background: #94a3b8;
+        color: #f8fafc;
+        padding: 2px 6px;
+        border-radius: 999px;
+        letter-spacing: 0.04em;
+      }
+
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      label {
+        font-weight: 600;
+      }
+
+      input[type="number"],
+      input[type="text"] {
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-size: 1rem;
+        font-family: inherit;
+        transition: border 0.2s ease;
+      }
+
+      input[type="number"]:focus,
+      input[type="text"]:focus {
+        outline: none;
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
+      }
+
+      button {
+        cursor: pointer;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 18px;
+        font-size: 1rem;
+        font-weight: 600;
+        background: linear-gradient(135deg, #0ea5e9, #2563eb);
+        color: white;
+        transition: transform 0.15s ease, box-shadow 0.2s ease;
+      }
+
+      button:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 24px rgba(37, 99, 235, 0.25);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.65;
+        box-shadow: none;
+      }
+
+      #resultMessage {
+        margin-top: 16px;
+        padding: 14px 16px;
+        border-radius: 10px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-weight: 600;
+        min-height: 48px;
+      }
+
+      #resultMessage.result-positive {
+        background: #ecfdf5;
+        color: #047857;
+      }
+
+      #resultMessage.result-negative {
+        background: #fef2f2;
+        color: #b91c1c;
+      }
+
+      .round-details {
+        margin-top: auto;
+        padding-top: 20px;
+        color: #475569;
+        font-size: 0.95rem;
+        line-height: 1.5;
+      }
+
+      .round-breakdown {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .round-breakdown .metric-label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #94a3b8;
+        margin-bottom: 4px;
+        display: block;
+      }
+
+      .round-breakdown .metric-value {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #0f172a;
+      }
+
+      .choices-table {
+        margin-top: 16px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .choices-header,
+      .choice-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        padding: 10px 14px;
+        font-size: 0.95rem;
+      }
+
+      .choices-header {
+        background: #f8fafc;
+        font-weight: 600;
+        color: #475569;
+      }
+
+      .choice-row:nth-child(even) {
+        background: #f9fafb;
+      }
+
+      .choice-row.choice-winner {
+        background: #ecfdf5;
+        color: #047857;
+      }
+
+      .choice-row.choice-disqualified {
+        background: #fef2f2;
+        color: #b91c1c;
+      }
+
+      .choice-row span:last-child {
+        font-variant-numeric: tabular-nums;
+      }
+
+      .muted {
+        color: #94a3b8;
+      }
+
+      .small-text {
+        font-size: 0.85rem;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      .secondary-button {
+        background: #475569;
+      }
+
+      .secondary-button:hover:not(:disabled) {
+        box-shadow: 0 12px 24px rgba(15, 23, 42, 0.2);
+      }
+
+      .host-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 1200;
+      }
+
+      .modal-card {
+        background: #ffffff;
+        border-radius: 16px;
+        max-width: 420px;
+        width: 100%;
+        padding: 24px;
+        text-align: center;
+        box-shadow: 0 25px 60px rgba(15, 23, 42, 0.25);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .modal-card h3 {
+        margin: 0;
+        font-size: 1.25rem;
+        color: #0f172a;
+      }
+
+      .modal-card p {
+        margin: 0;
+        color: #475569;
+        line-height: 1.5;
+      }
+
+      #join-screen {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 1000;
+      }
+
+      .join-card {
+        background: #ffffff;
+        padding: 28px 30px;
+        border-radius: 16px;
+        width: min(420px, 100%);
+        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .join-card h2 {
+        margin: 0;
+        font-size: 1.6rem;
+      }
+
+      .join-card p {
+        margin: 0;
+        color: #475569;
+      }
+
+      @media (max-width: 600px) {
+        .container {
+          padding: 24px 16px 40px;
+        }
+
+        header h1 {
+          font-size: 1.6rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="join-screen">
+      <form id="joinForm" class="join-card">
+        <div>
+          <h2>Join Balance Scale</h2>
+          <p>Pick a display name so other players can spot you.</p>
+        </div>
+        <label for="playerName">Display name</label>
+        <input
+          id="playerName"
+          name="playerName"
+          type="text"
+          placeholder="Ada Lovelace"
+          autocomplete="off"
+          maxlength="24"
+          required
+        />
+        <button type="submit" id="joinButton">Join game</button>
+        <p class="muted" id="joinHint"></p>
+      </form>
+    </div>
+
+    <div class="container">
+      <header>
+        <h1>Balance Scale</h1>
+        <div class="rules-panel">
+          <p class="rules-label">Rules</p>
+          <ul id="rulesList" class="rules-list">
+            <li>Submit a whole number between 0 and 100. Closest to 0.8x the lobby average wins.</li>
+          </ul>
+        </div>
+      </header>
+
+      <section class="game-grid">
+        <article class="panel">
+          <h2>Players</h2>
+          <div class="status" id="statusMessage">Waiting for players…</div>
+          <ul id="playersList"></ul>
+        </article>
+
+        <article class="panel">
+          <h2>Round</h2>
+          <form id="guessForm" class="hidden">
+            <label for="guessInput">Enter your guess (whole number 0 – 100)</label>
+            <input
+              id="guessInput"
+              name="guess"
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              inputmode="numeric"
+              placeholder="42"
+              required
+              autocomplete="off"
+            />
+            <button type="submit" id="submitGuess" disabled>Submit</button>
+          </form>
+          <div id="resultMessage" class="muted">Waiting for the first round…</div>
+          <div class="round-details">
+            <div id="roundInfo">Round status: idle</div>
+            <div class="round-breakdown">
+              <div>
+                <span class="metric-label">Average guess</span>
+                <span class="metric-value" id="averageValue">–</span>
+              </div>
+              <div>
+                <span class="metric-label">Target (0.8x)</span>
+                <span class="metric-value" id="targetValue">–</span>
+              </div>
+            </div>
+            <div class="choices-table hidden" id="choicesContainer">
+              <div class="choices-header">
+                <span>Player</span>
+                <span>Choice</span>
+              </div>
+              <div id="choicesBody"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel hidden" id="hostPanel">
+          <h2>Host controls</h2>
+          <div class="status" id="hostStatus">Waiting for the host…</div>
+          <div class="host-buttons">
+            <button type="button" id="startRoundBtn" disabled>Start round</button>
+            <button
+              type="button"
+              id="nextRoundBtn"
+              class="secondary-button"
+              disabled
+            >
+              Start next round
+            </button>
+            <button
+              type="button"
+              id="fillBotsBtn"
+              class="secondary-button"
+              disabled
+            >
+              Fill empty seats with bots
+            </button>
+          </div>
+          <p class="muted small-text" id="hostHint"></p>
+        </article>
+      </section>
+    </div>
+
+    <div id="infoModal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <h3 id="infoModalTitle">Notice</h3>
+        <p id="infoModalText"></p>
+        <button type="button" id="infoModalClose">Got it</button>
+      </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" integrity="sha384-2huaZvOR9iDzHqslqwpR87isEmrfxqyWOF7hr7BY6KG0+hVKLoEXMPUJw3ynWuhO" crossorigin="anonymous"></script>
+    <script src="script.js" defer></script>
+  </body>
+</html>
