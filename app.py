@@ -221,6 +221,30 @@ def get_bot_players(lobby):
     }
 
 
+def normalize_player_name(name):
+    if not isinstance(name, str):
+        name = str(name) if name is not None else ""
+    return name.strip()
+
+
+def prune_duplicate_players(lobby, player_name, current_sid):
+    """Remove non-bot players that share the same display name."""
+    normalized_target = normalize_player_name(player_name).casefold()
+    duplicates = []
+    host_replaced = False
+    for sid, player in list(lobby["players"].items()):
+        if sid == current_sid or player.get("is_bot"):
+            continue
+        existing_name = normalize_player_name(player.get("name", "")).casefold()
+        if existing_name == normalized_target:
+            lobby["players"].pop(sid, None)
+            duplicates.append(sid)
+            if lobby.get("host_id") == sid:
+                lobby["host_id"] = None
+                host_replaced = True
+    return duplicates, host_replaced
+
+
 def create_bot_player(lobby):
     lobby["bot_counter"] += 1
     bot_id = f"bot-{uuid.uuid4().hex}"
@@ -569,6 +593,8 @@ def handle_join_lobby(data):
     player_name = player_name[:MAX_NAME_LENGTH]
 
     join_room(lobby_id)
+    duplicate_sids = []
+    host_replaced = False
 
     with lobbies_lock:
         lobby = lobbies.get(lobby_id)
@@ -587,6 +613,10 @@ def handle_join_lobby(data):
             leave_room(lobby_id)
             emit("error", {"message": "Lobby is full or already in progress."})
             return
+
+        duplicates, replaced_host = prune_duplicate_players(lobby, player_name, request.sid)
+        duplicate_sids.extend(duplicates)
+        host_replaced = host_replaced or replaced_host
 
         while len(lobby["players"]) >= MIN_PLAYERS:
             bot_candidates = [
@@ -608,11 +638,14 @@ def handle_join_lobby(data):
             "eliminated": False,
         }
 
-        if lobby["host_id"] is None:
+        if host_replaced or lobby["host_id"] is None:
             lobby["host_id"] = request.sid
 
     emit("joined_lobby", {"lobby_id": lobby_id}, room=request.sid)
     broadcast_lobby_update(lobby_id)
+
+    for sid in duplicate_sids:
+        socketio.server.disconnect(sid)
 
 
 @socketio.on("host_start_round")
