@@ -20,6 +20,9 @@ socketio = SocketIO(app, async_mode="eventlet", cors_allowed_origins="*")
 lobbies = {}
 lobbies_lock = Lock()
 MIN_PLAYERS = 5
+MAX_NAME_LENGTH = 24
+LOBBY_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+LOBBY_CODE_LENGTH = 5
 
 BASE_RULE = "Submit a whole number between 0 and 100. Closest to 0.8x the average wins."
 ELIMINATION_RULES = {
@@ -27,6 +30,19 @@ ELIMINATION_RULES = {
     2: "Exact target hits make every other active player lose 2 points.",
     3: "If someone picks 0 and someone picks 100 in the same round, 100 wins immediately.",
 }
+
+
+def normalize_lobby_code(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    cleaned = "".join(ch for ch in value if ch.isalnum())
+    return cleaned.upper() or None
+
+
+def generate_lobby_code(length=LOBBY_CODE_LENGTH):
+    return "".join(random.choice(LOBBY_CODE_ALPHABET) for _ in range(length))
 
 
 def serialize_players(lobby, only_active=False):
@@ -498,18 +514,75 @@ def handle_disconnect():
         broadcast_lobby_update(removed_lobby_id)
 
 
-@socketio.on("join_lobby")
-def handle_join_lobby(data):
-    lobby_id = str(data.get("lobby_id", "default"))
-    player_name = data.get("player_name")
+@socketio.on("create_lobby")
+def handle_create_lobby(data):
+    player_name = str(data.get("player_name", "")).strip()
     if not player_name:
         emit("error", {"message": "player_name is required"})
+        return
+    player_name = player_name[:MAX_NAME_LENGTH]
+
+    lobby_id = None
+    with lobbies_lock:
+        for _ in range(12):
+            candidate = generate_lobby_code()
+            if candidate not in lobbies:
+                lobby_id = candidate
+                create_lobby_if_missing(candidate)
+                break
+
+    if not lobby_id:
+        emit("error", {"message": "Unable to create a lobby right now. Please try again."})
         return
 
     join_room(lobby_id)
 
     with lobbies_lock:
-        lobby = create_lobby_if_missing(lobby_id)
+        lobby = lobbies.get(lobby_id) or create_lobby_if_missing(lobby_id)
+        lobby["players"][request.sid] = {
+            "id": request.sid,
+            "name": player_name,
+            "score": 0,
+            "choice": None,
+            "eliminated": False,
+        }
+        lobby["host_id"] = request.sid
+
+    emit("lobby_created", {"lobby_id": lobby_id}, room=request.sid)
+    broadcast_lobby_update(lobby_id)
+
+
+@socketio.on("join_lobby")
+def handle_join_lobby(data):
+    raw_lobby_id = data.get("lobby_id")
+    lobby_id = normalize_lobby_code(raw_lobby_id)
+    player_name = str(data.get("player_name", "")).strip()
+
+    if not player_name:
+        emit("error", {"message": "player_name is required"})
+        return
+
+    if not lobby_id:
+        emit("error", {"message": "Lobby code is required."})
+        return
+
+    player_name = player_name[:MAX_NAME_LENGTH]
+
+    join_room(lobby_id)
+
+    with lobbies_lock:
+        lobby = lobbies.get(lobby_id)
+        if not lobby:
+            if lobby_id == "DEFAULT":
+                lobby = create_lobby_if_missing(lobby_id)
+            else:
+                leave_room(lobby_id)
+                emit(
+                    "error",
+                    {"message": "Lobby code not found. Double-check the code and try again."},
+                )
+                return
+
         if lobby["state"] == "running" or lobby["state"] == "finished":
             leave_room(lobby_id)
             emit("error", {"message": "Lobby is full or already in progress."})
@@ -538,12 +611,13 @@ def handle_join_lobby(data):
         if lobby["host_id"] is None:
             lobby["host_id"] = request.sid
 
+    emit("joined_lobby", {"lobby_id": lobby_id}, room=request.sid)
     broadcast_lobby_update(lobby_id)
 
 
 @socketio.on("host_start_round")
 def handle_host_start_round(data):
-    lobby_id = str(data.get("lobby_id", "default"))
+    lobby_id = normalize_lobby_code(data.get("lobby_id")) or "DEFAULT"
     with lobbies_lock:
         lobby = lobbies.get(lobby_id)
         if not lobby:
@@ -584,7 +658,7 @@ def handle_host_start_round(data):
 
 @socketio.on("fill_with_bots")
 def handle_fill_with_bots(data):
-    lobby_id = str(data.get("lobby_id", "default"))
+    lobby_id = normalize_lobby_code(data.get("lobby_id")) or "DEFAULT"
     requested = data.get("count")
 
     with lobbies_lock:
@@ -620,6 +694,8 @@ def handle_fill_with_bots(data):
             create_bot_player(lobby)
 
     broadcast_lobby_update(lobby_id)
+
+
 @app.route("/")
 def index():
     return app.send_static_file("index.html")
@@ -627,7 +703,7 @@ def index():
 
 @socketio.on("submit_number")
 def handle_submit_number(data):
-    lobby_id = str(data.get("lobby_id", "default"))
+    lobby_id = normalize_lobby_code(data.get("lobby_id")) or "DEFAULT"
     try:
         number = float(data.get("number"))
     except (TypeError, ValueError):

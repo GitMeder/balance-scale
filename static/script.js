@@ -3,6 +3,9 @@
   const joinForm = document.getElementById("joinForm");
   const joinHint = document.getElementById("joinHint");
   const nameInput = document.getElementById("playerName");
+  const lobbyCodeInput = document.getElementById("lobbyCodeInput");
+  const createLobbyBtn = document.getElementById("createLobbyBtn");
+  const joinLobbyBtn = document.getElementById("joinLobbyBtn");
   const statusMessage = document.getElementById("statusMessage");
   const resultMessage = document.getElementById("resultMessage");
   const roundInfo = document.getElementById("roundInfo");
@@ -25,17 +28,38 @@
   const infoModalTitle = document.getElementById("infoModalTitle");
   const infoModalText = document.getElementById("infoModalText");
   const infoModalClose = document.getElementById("infoModalClose");
+  const lobbyCodeBanner = document.getElementById("lobbyCodeBanner");
+  const lobbyCodeValue = document.getElementById("lobbyCodeValue");
+  const copyLobbyLinkBtn = document.getElementById("copyLobbyLinkBtn");
 
-  const lobbyFromQuery = new URLSearchParams(window.location.search).get("lobby");
-  const lobbyId = (lobbyFromQuery && lobbyFromQuery.trim()) || "default";
-  const socket = window.io ? window.io({ autoConnect: true }) : null;
+  function normalizeLobbyCode(value) {
+    if (typeof value !== "string") {
+      return "";
+    }
+    return value.replace(/[^0-9a-z]/gi, "").toUpperCase();
+  }
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const lobbyFromQuery = urlParams.get("lobby") || "";
+  const serverFromQuery = urlParams.get("server") || "";
+  const configServerUrl =
+    (window.APP_CONFIG && typeof window.APP_CONFIG.socketUrl === "string"
+      ? window.APP_CONFIG.socketUrl
+      : "") || "";
+  const initialLobbyCode = normalizeLobbyCode(lobbyFromQuery);
+  const socketTarget = serverFromQuery || configServerUrl || undefined;
+  const socket = window.io ? window.io(socketTarget || undefined, { autoConnect: true }) : null;
+
+  const NAME_LIMIT = 24;
+  const MAX_LOBBY_CODE_LENGTH = 8;
 
   const DEFAULT_RULES = [
     "Submit a whole number between 0 and 100. Closest to 0.8x the lobby average wins.",
   ];
 
   const state = {
-    lobbyId,
+    lobbyId: null,
+    pendingLobbyId: initialLobbyCode || null,
     playerName: "",
     connected: false,
     hasSubmitted: false,
@@ -51,7 +75,14 @@
     rules: DEFAULT_RULES,
     selectedNumber: null,
     guessEnabled: false,
+    pendingAction: null,
+    hasJoinedLobby: false,
+    serverOverride: serverFromQuery || "",
   };
+
+  if (initialLobbyCode && lobbyCodeInput) {
+    lobbyCodeInput.value = initialLobbyCode;
+  }
 
   if (!socket) {
     console.error("Socket.IO client failed to load.");
@@ -591,52 +622,212 @@
       : { text: `You lost ${label} this round.`, tone: "negative" };
   }
 
-  function handleJoinSuccess() {
-    joinScreen.classList.add("hidden");
+  function buildInviteUrl() {
+    const url = new URL(window.location.href);
+    if (state.lobbyId) {
+      url.searchParams.set("lobby", state.lobbyId);
+    }
+    if (state.serverOverride) {
+      url.searchParams.set("server", state.serverOverride);
+    } else {
+      url.searchParams.delete("server");
+    }
+    return url.toString();
+  }
+
+  function syncLobbyUrlInHistory() {
+    if (!state.lobbyId || !window.history || typeof window.history.replaceState !== "function") {
+      return;
+    }
+    const inviteUrl = buildInviteUrl();
+    window.history.replaceState({}, "", inviteUrl);
+  }
+
+  function updateLobbyCodeBanner() {
+    if (!lobbyCodeBanner || !lobbyCodeValue) {
+      return;
+    }
+    if (state.lobbyId) {
+      lobbyCodeValue.textContent = state.lobbyId;
+      lobbyCodeBanner.classList.remove("hidden");
+    } else {
+      lobbyCodeBanner.classList.add("hidden");
+    }
+  }
+
+  function copyLobbyInviteLink() {
+    if (!state.lobbyId) {
+      return;
+    }
+    const inviteUrl = buildInviteUrl();
+    const flashCopied = () => {
+      if (!copyLobbyLinkBtn) {
+        return;
+      }
+      const originalText = copyLobbyLinkBtn.textContent;
+      copyLobbyLinkBtn.textContent = "Copied!";
+      copyLobbyLinkBtn.disabled = true;
+      setTimeout(() => {
+        copyLobbyLinkBtn.textContent = originalText || "Copy invite link";
+        copyLobbyLinkBtn.disabled = false;
+      }, 1500);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(inviteUrl).then(flashCopied).catch(() => {
+        window.prompt("Share this lobby link:", inviteUrl);
+      });
+    } else {
+      window.prompt("Share this lobby link:", inviteUrl);
+    }
+  }
+
+  function setJoinButtonsDisabled(disabled) {
+    if (createLobbyBtn) {
+      createLobbyBtn.disabled = disabled;
+    }
+    if (joinLobbyBtn) {
+      joinLobbyBtn.disabled = disabled;
+    }
+  }
+
+  function preparePlayerIdentity() {
+    const chosenName = nameInput.value.trim().slice(0, NAME_LIMIT);
+    if (!chosenName) {
+      joinHint.textContent = "Please choose a display name first.";
+      return false;
+    }
+    state.playerName = chosenName;
+    state.isEliminated = false;
+    state.roundNumber = 0;
+    state.hasSubmitted = false;
+    joinHint.textContent = "";
+    return true;
+  }
+
+  function executePendingAction() {
+    if (!state.pendingAction || !socket || !state.playerName) {
+      return;
+    }
+    if (state.pendingAction.type === "create") {
+      socket.emit("create_lobby", { player_name: state.playerName });
+    } else if (state.pendingAction.type === "join" && state.pendingAction.lobbyId) {
+      emitJoinEvent(state.pendingAction.lobbyId);
+    }
+  }
+
+  function requestLobbyCreation(event) {
+    if (event) {
+      event.preventDefault();
+    }
+    if (!preparePlayerIdentity()) {
+      return;
+    }
+    state.pendingLobbyId = null;
+    state.pendingAction = { type: "create" };
+    joinHint.textContent = "Creating a fresh lobby for you…";
+    setJoinButtonsDisabled(true);
+    if (state.connected) {
+      executePendingAction();
+    } else {
+      setStatus("Connecting to server…");
+    }
+  }
+
+  function requestLobbyJoin(event) {
+    if (event) {
+      event.preventDefault();
+    }
+    if (!preparePlayerIdentity()) {
+      return;
+    }
+    const typedCode = lobbyCodeInput ? normalizeLobbyCode(lobbyCodeInput.value) : "";
+    const targetLobby = typedCode || state.pendingLobbyId;
+    if (!targetLobby) {
+      joinHint.textContent = "Enter a lobby code shared by the host.";
+      return;
+    }
+    state.pendingLobbyId = targetLobby;
+    state.pendingAction = { type: "join", lobbyId: targetLobby };
+    joinHint.textContent = `Joining lobby ${targetLobby}…`;
+    setJoinButtonsDisabled(true);
+    if (state.connected) {
+      executePendingAction();
+    } else {
+      setStatus("Connecting to server…");
+    }
+  }
+
+  function handleJoinSuccess(lobbyId, options = {}) {
+    if (!lobbyId) {
+      return;
+    }
+
+    state.lobbyId = lobbyId;
+    state.pendingLobbyId = lobbyId;
+    state.pendingAction = null;
+    state.hasJoinedLobby = true;
+    state.roundActive = false;
+    state.awaitingNextRound = false;
+    state.lobbyState = "waiting";
+    state.selectedNumber = null;
+    state.hasSubmitted = false;
+
+    setJoinButtonsDisabled(false);
+    if (joinScreen) {
+      joinScreen.classList.add("hidden");
+    }
     if (numberGridSection) {
       numberGridSection.classList.remove("hidden");
     }
-    state.selectedNumber = null;
-    state.hasSubmitted = false;
     setGuessEnabled(false);
     updateNumberGridUI();
-    setStatus(`Joined lobby "${state.lobbyId}". Waiting for other players…`);
-    setResult("Waiting for the first round…", "info");
     resetRoundBreakdown();
+    updateLobbyCodeBanner();
+    syncLobbyUrlInHistory();
+
+    const joinMessage = options.created
+      ? `Lobby ${lobbyId} created. Share the code or invite link with your friends.`
+      : `Joined lobby "${lobbyId}". Waiting for other players…`;
+    setStatus(joinMessage);
+    setResult("Waiting for the first round…", "info");
   }
 
-  function emitJoinEvent() {
-    if (!state.playerName || !socket) {
+  function emitJoinEvent(targetLobbyId = state.lobbyId) {
+    if (!state.playerName || !socket || !targetLobbyId) {
       return;
     }
 
     socket.emit("join_lobby", {
-      lobby_id: state.lobbyId,
+      lobby_id: targetLobbyId,
       player_name: state.playerName,
     });
   }
 
   joinForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const chosenName = nameInput.value.trim().slice(0, 24);
-
-    if (!chosenName) {
-      joinHint.textContent = "Please choose a name to join the lobby.";
-      return;
-    }
-
-    state.playerName = chosenName;
-    state.isEliminated = false;
-    state.roundNumber = 0;
-    joinHint.textContent = "";
-    handleJoinSuccess();
-
-    if (state.connected) {
-      emitJoinEvent();
+    const inputHasCode = lobbyCodeInput && Boolean(normalizeLobbyCode(lobbyCodeInput.value));
+    if (inputHasCode || state.pendingLobbyId) {
+      requestLobbyJoin(event);
     } else {
-      setStatus("Connecting to server…");
+      requestLobbyCreation(event);
     }
   });
+
+  if (createLobbyBtn) {
+    createLobbyBtn.addEventListener("click", requestLobbyCreation);
+  }
+
+  if (joinLobbyBtn) {
+    joinLobbyBtn.addEventListener("click", requestLobbyJoin);
+  }
+
+  if (lobbyCodeInput) {
+    lobbyCodeInput.addEventListener("input", () => {
+      const normalized = normalizeLobbyCode(lobbyCodeInput.value).slice(0, MAX_LOBBY_CODE_LENGTH);
+      lobbyCodeInput.value = normalized;
+      state.pendingLobbyId = normalized || null;
+    });
+  }
 
   startRoundBtn.addEventListener("click", emitHostStartRequest);
   nextRoundBtn.addEventListener("click", emitHostStartRequest);
@@ -645,7 +836,9 @@
   socket.on("connect", () => {
     state.connected = true;
     state.socketId = socket.id;
-    if (state.playerName) {
+    if (state.pendingAction) {
+      executePendingAction();
+    } else if (state.playerName && state.lobbyId) {
       emitJoinEvent();
       setStatus("Connected! Waiting for the next round…");
     } else {
@@ -663,7 +856,9 @@
     console.info("Reconnected after", attempt, "attempts");
     setStatus("Reconnected to the server.");
     state.socketId = socket.id;
-    if (state.playerName && !state.isEliminated) {
+    if (state.pendingAction) {
+      executePendingAction();
+    } else if (state.playerName && state.lobbyId && !state.isEliminated) {
       emitJoinEvent();
     }
     updateHostControls();
@@ -680,12 +875,34 @@
     }
   });
 
+  socket.on("lobby_created", (payload = {}) => {
+    const lobbyId = normalizeLobbyCode(payload.lobby_id || payload.lobbyId || "");
+    if (!lobbyId) {
+      setJoinButtonsDisabled(false);
+      return;
+    }
+    handleJoinSuccess(lobbyId, { created: true });
+  });
+
+  socket.on("joined_lobby", (payload = {}) => {
+    const lobbyId = normalizeLobbyCode(payload.lobby_id || payload.lobbyId || "");
+    if (!lobbyId) {
+      setJoinButtonsDisabled(false);
+      return;
+    }
+    handleJoinSuccess(lobbyId);
+  });
+
   socket.on("error", (payload = {}) => {
     const message = payload.message || payload.error || "Server reported an error.";
     setResult(message, "negative");
     setStatus(message);
-    if (!state.playerName) {
+    if (!state.playerName || !state.hasJoinedLobby) {
       joinHint.textContent = message;
+    }
+    if (!state.hasJoinedLobby) {
+      state.pendingAction = null;
+      setJoinButtonsDisabled(false);
     }
   });
 
@@ -843,4 +1060,8 @@
     setStatus("Game over. Restart the page to join a new session.");
     updateHostControls(payload);
   });
+
+  if (copyLobbyLinkBtn) {
+    copyLobbyLinkBtn.addEventListener("click", copyLobbyInviteLink);
+  }
 })();

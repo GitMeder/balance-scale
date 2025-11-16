@@ -482,6 +482,51 @@
         color: #475569;
       }
 
+      .join-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .join-existing {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .code-input-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .code-input-row input {
+        flex: 1;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .lobby-code-banner {
+        margin-top: 12px;
+        padding: 12px 16px;
+        border-radius: 10px;
+        background: #0f172a;
+        color: #f1f5f9;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .lobby-code-banner strong {
+        font-size: 1.05rem;
+        letter-spacing: 0.12em;
+      }
+
+      .small-button {
+        padding: 8px 12px;
+        font-size: 0.85rem;
+      }
+
       @media (max-width: 600px) {
         .container {
           padding: 24px 16px 40px;
@@ -495,10 +540,10 @@
   </head>
   <body>
     <div id="join-screen">
-      <form id="joinForm" class="join-card">
+      <form id="joinForm" class="join-card" autocomplete="off">
         <div>
-          <h2>Join Balance Scale</h2>
-          <p>Pick a display name so other players can spot you.</p>
+          <h2>Play Balance Scale</h2>
+          <p>Pick a display name, then create or join a private lobby.</p>
         </div>
         <label for="playerName">Display name</label>
         <input
@@ -510,7 +555,29 @@
           maxlength="24"
           required
         />
-        <button type="submit" id="joinButton">Join game</button>
+        <div class="join-actions">
+          <button type="button" id="createLobbyBtn">Create a new lobby</button>
+          <div class="join-existing">
+            <label for="lobbyCodeInput">Have a lobby code?</label>
+            <div class="code-input-row">
+              <input
+                id="lobbyCodeInput"
+                name="lobbyCode"
+                type="text"
+                placeholder="ABCDE"
+                maxlength="8"
+                autocapitalize="characters"
+                autocomplete="off"
+                inputmode="latin"
+              />
+              <button type="button" class="secondary-button" id="joinLobbyBtn">Join lobby</button>
+            </div>
+            <p class="muted small-text">
+              Share this code with your friends so they can join the same lobby.
+            </p>
+          </div>
+        </div>
+        <button type="submit" class="hidden" tabindex="-1" aria-hidden="true"></button>
         <p class="muted" id="joinHint"></p>
       </form>
     </div>
@@ -518,6 +585,17 @@
     <div class="container">
       <header>
         <h1>Balance Scale</h1>
+        <p>
+          Challenge your friends to a live 0.8× average guessing game. Create a lobby, share the code,
+          and see who survives the elimination twists.
+        </p>
+        <div id="lobbyCodeBanner" class="lobby-code-banner hidden">
+          <span>Lobby code:</span>
+          <strong id="lobbyCodeValue">—</strong>
+          <button type="button" class="secondary-button small-button" id="copyLobbyLinkBtn">
+            Copy invite link
+          </button>
+        </div>
         <div class="rules-panel">
           <p class="rules-label">Rules</p>
           <ul id="rulesList" class="rules-list">
