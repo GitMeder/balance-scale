@@ -93,6 +93,7 @@ def broadcast_lobby_update(lobby_id):
             "state": lobby["state"],
             "round": lobby["round"],
             "awaiting_next_round": lobby.get("awaiting_next_round", False),
+            "awaiting_choices": lobby.get("awaiting_choices", False),
             "player_count": len(lobby["players"]),
             "min_players": MIN_PLAYERS,
             "eliminations": lobby["eliminations"],
@@ -308,6 +309,7 @@ def begin_round(lobby_id):
             "players": player_status,
             "eliminations": lobby["eliminations"],
             "active_rules": get_active_rules(lobby["eliminations"]),
+            "awaiting_choices": True,
         },
         room=lobby_id,
     )
@@ -423,6 +425,7 @@ def evaluate_round(lobby_id):
             "players_after": serialize_players(lobby),
             "eliminations": lobby["eliminations"],
             "active_rules": get_active_rules(lobby["eliminations"]),
+            "awaiting_choices": lobby.get("awaiting_choices", False),
         }
 
         if eliminated_this_round:

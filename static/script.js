@@ -108,6 +108,7 @@
     hasJoinedLobby: false,
     serverOverride: serverFromQuery || "",
     clientId: persistentClientId,
+    awaitingChoices: false,
   };
 
   if (initialLobbyCode && lobbyCodeInput) {
@@ -507,8 +508,15 @@
     if (typeof payload.awaiting_next_round === "boolean") {
       state.awaitingNextRound = payload.awaiting_next_round;
     }
+    if (typeof payload.awaiting_choices === "boolean") {
+      state.awaitingChoices = payload.awaiting_choices;
+    }
     if (typeof payload.round === "number") {
       state.roundNumber = payload.round;
+    }
+
+    if (typeof payload.state === "string" && typeof payload.awaiting_choices === "boolean") {
+      state.roundActive = payload.state === "running" && payload.awaiting_choices;
     }
 
     if (socket && socket.id) {
@@ -805,6 +813,7 @@
     state.lobbyState = "waiting";
     state.selectedNumber = null;
     state.hasSubmitted = false;
+    state.awaitingChoices = false;
 
     setJoinButtonsDisabled(false);
     if (joinScreen) {
@@ -946,6 +955,9 @@
     syncHostRole(payload);
     updateHostControls(payload);
     updateRulesList(payload.active_rules);
+    if (typeof payload.awaiting_choices === "boolean") {
+      state.awaitingChoices = payload.awaiting_choices;
+    }
 
     if (!state.playerName) {
       return;
@@ -963,6 +975,14 @@
       } else {
         setStatus("Waiting for the host to start the first round.");
       }
+    } else if (
+      state.lobbyState === "running" &&
+      state.awaitingChoices &&
+      !state.hasSubmitted &&
+      !state.isEliminated
+    ) {
+      setGuessEnabled(true);
+      setStatus("Round in progress. Make your guess!");
     }
   });
 
@@ -971,6 +991,8 @@
     state.roundActive = true;
     state.awaitingNextRound = false;
     state.lobbyState = "running";
+    state.awaitingChoices =
+      typeof payload.awaiting_choices === "boolean" ? payload.awaiting_choices : true;
     state.roundNumber = typeof payload.round === "number" ? payload.round : state.roundNumber + 1;
     resetRoundBreakdown();
     state.selectedNumber = null;
@@ -993,6 +1015,8 @@
     state.hasSubmitted = false;
     state.roundActive = false;
     state.awaitingNextRound = Boolean(payload.awaiting_next_round);
+    state.awaitingChoices =
+      typeof payload.awaiting_choices === "boolean" ? payload.awaiting_choices : false;
     setGuessEnabled(false);
 
     if (Array.isArray(payload.players_after)) {
