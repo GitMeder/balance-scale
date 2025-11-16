@@ -23,6 +23,7 @@ MIN_PLAYERS = 5
 MAX_NAME_LENGTH = 24
 LOBBY_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 LOBBY_CODE_LENGTH = 5
+CLIENT_ID_MAX_LENGTH = 64
 
 BASE_RULE = "Submit a whole number between 0 and 100. Closest to 0.8x the average wins."
 ELIMINATION_RULES = {
@@ -43,6 +44,17 @@ def normalize_lobby_code(value):
 
 def generate_lobby_code(length=LOBBY_CODE_LENGTH):
     return "".join(random.choice(LOBBY_CODE_ALPHABET) for _ in range(length))
+
+
+def normalize_client_id(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    value = value.strip()
+    if not value:
+        return None
+    return value[:CLIENT_ID_MAX_LENGTH]
 
 
 def serialize_players(lobby, only_active=False):
@@ -221,22 +233,17 @@ def get_bot_players(lobby):
     }
 
 
-def normalize_player_name(name):
-    if not isinstance(name, str):
-        name = str(name) if name is not None else ""
-    return name.strip()
+def remove_duplicate_clients(lobby, client_id, current_sid):
+    """Remove any non-bot players that belong to the same physical client."""
+    if not client_id:
+        return [], False
 
-
-def prune_duplicate_players(lobby, player_name, current_sid):
-    """Remove non-bot players that share the same display name."""
-    normalized_target = normalize_player_name(player_name).casefold()
     duplicates = []
     host_replaced = False
     for sid, player in list(lobby["players"].items()):
         if sid == current_sid or player.get("is_bot"):
             continue
-        existing_name = normalize_player_name(player.get("name", "")).casefold()
-        if existing_name == normalized_target:
+        if player.get("client_id") == client_id:
             lobby["players"].pop(sid, None)
             duplicates.append(sid)
             if lobby.get("host_id") == sid:
@@ -545,6 +552,7 @@ def handle_create_lobby(data):
         emit("error", {"message": "player_name is required"})
         return
     player_name = player_name[:MAX_NAME_LENGTH]
+    client_id = normalize_client_id(data.get("client_id")) or request.sid
 
     lobby_id = None
     with lobbies_lock:
@@ -569,6 +577,7 @@ def handle_create_lobby(data):
             "score": 0,
             "choice": None,
             "eliminated": False,
+            "client_id": client_id,
         }
         lobby["host_id"] = request.sid
 
@@ -581,6 +590,7 @@ def handle_join_lobby(data):
     raw_lobby_id = data.get("lobby_id")
     lobby_id = normalize_lobby_code(raw_lobby_id)
     player_name = str(data.get("player_name", "")).strip()
+    client_id = normalize_client_id(data.get("client_id")) or request.sid
 
     if not player_name:
         emit("error", {"message": "player_name is required"})
@@ -614,7 +624,7 @@ def handle_join_lobby(data):
             emit("error", {"message": "Lobby is full or already in progress."})
             return
 
-        duplicates, replaced_host = prune_duplicate_players(lobby, player_name, request.sid)
+        duplicates, replaced_host = remove_duplicate_clients(lobby, client_id, request.sid)
         duplicate_sids.extend(duplicates)
         host_replaced = host_replaced or replaced_host
 
@@ -636,6 +646,7 @@ def handle_join_lobby(data):
             "score": 0,
             "choice": None,
             "eliminated": False,
+            "client_id": client_id,
         }
 
         if host_replaced or lobby["host_id"] is None:

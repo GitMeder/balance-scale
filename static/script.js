@@ -52,10 +52,39 @@
 
   const NAME_LIMIT = 24;
   const MAX_LOBBY_CODE_LENGTH = 8;
+  const CLIENT_ID_STORAGE_KEY = "balanceScaleClientId";
 
   const DEFAULT_RULES = [
     "Submit a whole number between 0 and 100. Closest to 0.8x the lobby average wins.",
   ];
+
+  function generateClientId() {
+    if (window.crypto?.randomUUID) {
+      return window.crypto.randomUUID();
+    }
+    return (
+      Math.random().toString(36).slice(2, 10) +
+      Math.random().toString(36).slice(2, 10)
+    ).toUpperCase();
+  }
+
+  function getOrCreateClientId() {
+    try {
+      const store = window.sessionStorage;
+      const stored = store.getItem(CLIENT_ID_STORAGE_KEY);
+      if (stored) {
+        return stored;
+      }
+      const next = generateClientId();
+      store.setItem(CLIENT_ID_STORAGE_KEY, next);
+      return next;
+    } catch (error) {
+      console.warn("Unable to access sessionStorage for client id:", error);
+      return generateClientId();
+    }
+  }
+
+  const persistentClientId = getOrCreateClientId();
 
   const state = {
     lobbyId: null,
@@ -78,6 +107,7 @@
     pendingAction: null,
     hasJoinedLobby: false,
     serverOverride: serverFromQuery || "",
+    clientId: persistentClientId,
   };
 
   if (initialLobbyCode && lobbyCodeInput) {
@@ -710,7 +740,10 @@
       return;
     }
     if (state.pendingAction.type === "create") {
-      socket.emit("create_lobby", { player_name: state.playerName });
+      socket.emit("create_lobby", {
+        player_name: state.playerName,
+        client_id: state.clientId,
+      });
     } else if (state.pendingAction.type === "join" && state.pendingAction.lobbyId) {
       emitJoinEvent(state.pendingAction.lobbyId);
     }
@@ -801,6 +834,7 @@
     socket.emit("join_lobby", {
       lobby_id: targetLobbyId,
       player_name: state.playerName,
+      client_id: state.clientId,
     });
   }
 
