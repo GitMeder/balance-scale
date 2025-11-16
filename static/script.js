@@ -53,6 +53,18 @@
   const NAME_LIMIT = 24;
   const MAX_LOBBY_CODE_LENGTH = 8;
   const CLIENT_ID_STORAGE_KEY = "balanceScaleClientId";
+  const PLAYER_COLORS = [
+    "#ef4444",
+    "#f97316",
+    "#facc15",
+    "#22c55e",
+    "#0ea5e9",
+    "#6366f1",
+    "#a855f7",
+    "#ec4899",
+    "#14b8a6",
+    "#fb7185",
+  ];
 
   const DEFAULT_RULES = [
     "Submit a whole number between 0 and 100. Closest to 0.8x the lobby average wins.",
@@ -86,6 +98,23 @@
 
   const persistentClientId = getOrCreateClientId();
 
+  function getNextColor() {
+    const color = PLAYER_COLORS[state.colorCursor % PLAYER_COLORS.length];
+    state.colorCursor += 1;
+    return color;
+  }
+
+  function getPlayerColor(name) {
+    const key = name || "";
+    if (!key) {
+      return "#475569";
+    }
+    if (!state.playerColors.has(key)) {
+      state.playerColors.set(key, getNextColor());
+    }
+    return state.playerColors.get(key);
+  }
+
   const state = {
     lobbyId: null,
     pendingLobbyId: initialLobbyCode || null,
@@ -111,6 +140,9 @@
     awaitingChoices: false,
     allPlayersReady: false,
     readyAcknowledged: false,
+    playerColors: new Map(),
+    colorCursor: 0,
+    latestWinners: new Set(),
   };
 
   if (initialLobbyCode && lobbyCodeInput) {
@@ -170,7 +202,8 @@
 
   function clearNumberHighlights() {
     numberButtons.forEach((btn) => {
-      btn.classList.remove("target", "choice-self", "choice-other");
+      btn.classList.remove("target", "choice-self", "choice-other", "choice-highlight");
+      btn.style.removeProperty("--choice-accent");
     });
   }
 
@@ -360,8 +393,27 @@
         div.classList.add("choice-disqualified");
       }
 
+      const color = getPlayerColor(row.name);
+      div.style.setProperty("--choice-accent", color);
+
       const nameSpan = document.createElement("span");
-      nameSpan.textContent = row.name;
+      nameSpan.className = "choice-name";
+
+      const colorDot = document.createElement("span");
+      colorDot.className = "choice-color-dot";
+      colorDot.style.backgroundColor = color;
+      nameSpan.appendChild(colorDot);
+
+      const label = document.createElement("span");
+      label.textContent = row.name;
+      nameSpan.appendChild(label);
+
+      if (winnersSet.has(row.name)) {
+        const winnerFlag = document.createElement("span");
+        winnerFlag.className = "choice-winner-flag";
+        winnerFlag.textContent = "Winner";
+        nameSpan.appendChild(winnerFlag);
+      }
 
       const valueSpan = document.createElement("span");
       const wholeValue = Number.isFinite(row.value)
@@ -404,6 +456,9 @@
         if (!button) {
           return;
         }
+        const color = getPlayerColor(name);
+        button.style.setProperty("--choice-accent", color);
+        button.classList.add("choice-highlight");
         if (name === state.playerName) {
           button.classList.add("choice-self");
         } else {
@@ -476,6 +531,8 @@
     players.forEach((player, index) => {
       const li = document.createElement("li");
       li.className = "player-row";
+      const color = getPlayerColor(player.name);
+      li.style.setProperty("--player-accent", color);
 
       if (player.name === state.playerName) {
         li.classList.add("me");
@@ -487,7 +544,14 @@
 
       const nameSpan = document.createElement("span");
       nameSpan.className = "player-name";
-      nameSpan.textContent = player.name ?? `Player ${index + 1}`;
+      const colorDot = document.createElement("span");
+      colorDot.className = "player-color-dot";
+      colorDot.style.backgroundColor = color;
+      nameSpan.appendChild(colorDot);
+
+      const nameText = document.createElement("span");
+      nameText.textContent = player.name ?? `Player ${index + 1}`;
+      nameSpan.appendChild(nameText);
 
       if (player.isHost) {
         const badge = document.createElement("span");
@@ -499,6 +563,14 @@
         badge.className = "bot-badge";
         badge.textContent = "Bot";
         nameSpan.appendChild(badge);
+      }
+
+      if (state.latestWinners.has(player.name)) {
+        li.classList.add("round-winner");
+        const winnerBadge = document.createElement("span");
+        winnerBadge.className = "winner-badge";
+        winnerBadge.textContent = "Winner";
+        nameSpan.appendChild(winnerBadge);
       }
 
       const scoreSpan = document.createElement("span");
@@ -863,6 +935,9 @@
     setStatus(joinMessage);
     setResult("Waiting for the first round…", "info");
     state.readyAcknowledged = false;
+    state.playerColors = new Map();
+    state.colorCursor = 0;
+    state.latestWinners = new Set();
     emitPlayerReady("post-join");
   }
 
@@ -1040,6 +1115,7 @@
     state.awaitingChoices =
       typeof payload.awaiting_choices === "boolean" ? payload.awaiting_choices : true;
     state.readyAcknowledged = false;
+    state.latestWinners = new Set();
     state.roundNumber = typeof payload.round === "number" ? payload.round : state.roundNumber + 1;
     resetRoundBreakdown();
     state.selectedNumber = null;
@@ -1052,6 +1128,9 @@
 
     updateHostControls(payload);
     updateRulesList(payload.active_rules);
+    if (state.players.length) {
+      updatePlayersList(state.players, { persist: true });
+    }
 
     const roundLabel = state.roundNumber || payload.round || 1;
     setStatus(`Round ${roundLabel} has started! Submit your guess.`);
@@ -1082,6 +1161,7 @@
     let message = "Round finished.";
     let tone = "info";
     const winners = Array.isArray(payload.winners) ? payload.winners : [];
+    state.latestWinners = new Set(winners);
 
     const before = payload.scores_before?.[state.playerName];
     const after = payload.scores_after?.[state.playerName];
@@ -1107,6 +1187,9 @@
 
     setStatus(waitingStatus);
     setResult(message, tone);
+    if (state.players.length) {
+      updatePlayersList(state.players, { persist: true });
+    }
 
     if (state.awaitingNextRound && !state.isEliminated) {
       state.readyAcknowledged = false;
