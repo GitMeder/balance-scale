@@ -109,6 +109,8 @@
     serverOverride: serverFromQuery || "",
     clientId: persistentClientId,
     awaitingChoices: false,
+    allPlayersReady: false,
+    readyAcknowledged: false,
   };
 
   if (initialLobbyCode && lobbyCodeInput) {
@@ -170,6 +172,20 @@
     numberButtons.forEach((btn) => {
       btn.classList.remove("target", "choice-self", "choice-other");
     });
+  }
+
+  function emitPlayerReady(reason = "auto") {
+    if (!socket || !state.lobbyId || !state.playerName) {
+      return;
+    }
+    if (state.isEliminated) {
+      return;
+    }
+    socket.emit("player_ready", {
+      lobby_id: state.lobbyId,
+      reason,
+    });
+    state.readyAcknowledged = true;
   }
 
   function handleNumberClick(value) {
@@ -511,6 +527,9 @@
     if (typeof payload.awaiting_choices === "boolean") {
       state.awaitingChoices = payload.awaiting_choices;
     }
+    if (typeof payload.all_players_ready === "boolean") {
+      state.allPlayersReady = payload.all_players_ready;
+    }
     if (typeof payload.round === "number") {
       state.roundNumber = payload.round;
     }
@@ -554,11 +573,12 @@
     const readyForNextRound =
       state.lobbyState === "running" && state.awaitingNextRound && !state.roundActive;
     const canFillBots = deficit > 0 && !state.roundActive && waitingForFirstRound;
+    const allReady = state.allPlayersReady;
 
     startRoundBtn.classList.toggle("hidden", state.roundActive || !waitingForFirstRound);
     nextRoundBtn.classList.toggle("hidden", waitingForFirstRound || !readyForNextRound);
-    startRoundBtn.disabled = !(enoughPlayers && readyForInitialStart);
-    nextRoundBtn.disabled = !(enoughPlayers && readyForNextRound);
+    startRoundBtn.disabled = !(enoughPlayers && readyForInitialStart && allReady);
+    nextRoundBtn.disabled = !(enoughPlayers && readyForNextRound && allReady);
     if (fillBotsBtn) {
       fillBotsBtn.classList.toggle("hidden", !canFillBots);
       fillBotsBtn.disabled = !canFillBots;
@@ -578,14 +598,20 @@
       hintText = "You can start the next round once the results are in.";
     } else if (waitingForFirstRound) {
       statusText = "Waiting to start the first round.";
-      hintText = enoughPlayers
-        ? "Click \"Start round\" when everyone is ready."
-        : deficit
+      if (!enoughPlayers) {
+        hintText = deficit
           ? `Waiting for ${deficit} more player(s). Use the bot button if needed.`
           : "Waiting for additional players.";
+      } else if (!allReady) {
+        hintText = "Waiting for every player to mark as ready.";
+      } else {
+        hintText = 'Click "Start round" when everyone is ready.';
+      }
     } else if (readyForNextRound) {
       statusText = "Review the round results, then start the next round.";
-      hintText = "Click \"Start next round\" to continue.";
+      hintText = allReady
+        ? 'Click "Start next round" to continue.'
+        : "Waiting for every player to mark as ready.";
     } else if (state.lobbyState === "finished") {
       statusText = "Game finished.";
       hintText = "Refresh to start a new lobby.";
@@ -599,6 +625,9 @@
 
   function emitHostStartRequest() {
     if (!state.isHost || !socket) {
+      return;
+    }
+    if (!state.allPlayersReady) {
       return;
     }
     startRoundBtn.disabled = true;
@@ -833,6 +862,8 @@
       : `Joined lobby "${lobbyId}". Waiting for other players…`;
     setStatus(joinMessage);
     setResult("Waiting for the first round…", "info");
+    state.readyAcknowledged = false;
+    emitPlayerReady("post-join");
   }
 
   function emitJoinEvent(targetLobbyId = state.lobbyId) {
@@ -910,6 +941,7 @@
   socket.on("disconnect", (reason) => {
     state.connected = false;
     setStatus(`Disconnected (${reason || "unknown reason"}). Trying to reconnect…`);
+    state.readyAcknowledged = false;
   });
 
   socket.on("connected", (payload = {}) => {
@@ -953,6 +985,9 @@
     const players = Array.isArray(payload.players) ? payload.players : payload;
     updatePlayersList(players, { persist: true });
     syncHostRole(payload);
+    if (typeof payload.all_players_ready === "boolean") {
+      state.allPlayersReady = payload.all_players_ready;
+    }
     updateHostControls(payload);
     updateRulesList(payload.active_rules);
     if (typeof payload.awaiting_choices === "boolean") {
@@ -984,6 +1019,17 @@
       setGuessEnabled(true);
       setStatus("Round in progress. Make your guess!");
     }
+
+    if (
+      state.hasJoinedLobby &&
+      payload.state === "waiting" &&
+      !state.roundActive &&
+      !state.awaitingChoices &&
+      !state.readyAcknowledged &&
+      !state.isEliminated
+    ) {
+      emitPlayerReady("waiting-state");
+    }
   });
 
   socket.on("game_started", (payload = {}) => {
@@ -993,6 +1039,7 @@
     state.lobbyState = "running";
     state.awaitingChoices =
       typeof payload.awaiting_choices === "boolean" ? payload.awaiting_choices : true;
+    state.readyAcknowledged = false;
     state.roundNumber = typeof payload.round === "number" ? payload.round : state.roundNumber + 1;
     resetRoundBreakdown();
     state.selectedNumber = null;
@@ -1060,6 +1107,11 @@
 
     setStatus(waitingStatus);
     setResult(message, tone);
+
+    if (state.awaitingNextRound && !state.isEliminated) {
+      state.readyAcknowledged = false;
+      emitPlayerReady(`after-round-${state.roundNumber || payload.round || 0}`);
+    }
   });
 
   socket.on("player_eliminated", (payload = {}) => {

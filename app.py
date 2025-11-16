@@ -98,6 +98,7 @@ def broadcast_lobby_update(lobby_id):
             "min_players": MIN_PLAYERS,
             "eliminations": lobby["eliminations"],
             "active_rules": get_active_rules(lobby["eliminations"]),
+            "all_players_ready": all_active_players_ready(lobby),
         }
     socketio.emit("lobby_update", payload, room=lobby_id)
 
@@ -253,6 +254,32 @@ def remove_duplicate_clients(lobby, client_id, current_sid):
     return duplicates, host_replaced
 
 
+def normalize_display_name(name):
+    if not isinstance(name, str):
+        name = str(name) if name is not None else ""
+    return name.strip().casefold()
+
+
+def is_name_taken(lobby, player_name):
+    target = normalize_display_name(player_name)
+    for player in lobby["players"].values():
+        if player.get("is_bot"):
+            continue
+        existing = normalize_display_name(player.get("name", ""))
+        if existing and existing == target:
+            return True
+    return False
+
+
+def all_active_players_ready(lobby):
+    for player in get_active_players(lobby).values():
+        if player.get("is_bot"):
+            continue
+        if not player.get("ready"):
+            return False
+    return True
+
+
 def create_bot_player(lobby):
     lobby["bot_counter"] += 1
     bot_id = f"bot-{uuid.uuid4().hex}"
@@ -264,6 +291,7 @@ def create_bot_player(lobby):
         "choice": None,
         "eliminated": False,
         "is_bot": True,
+        "ready": True,
     }
     return bot_id, lobby["players"][bot_id]
 
@@ -296,6 +324,8 @@ def begin_round(lobby_id):
         lobby["awaiting_next_round"] = False
         for player in lobby["players"].values():
             player["choice"] = None
+            if not player.get("is_bot"):
+                player["ready"] = False
 
         round_number = lobby["round"]
         player_status = serialize_players(lobby, only_active=True)
@@ -317,6 +347,8 @@ def begin_round(lobby_id):
     if has_bots:
         socketio.start_background_task(run_bot_submissions, lobby_id)
 
+    broadcast_lobby_update(lobby_id)
+
 
 def reset_lobby_state(lobby_id):
     eventlet.sleep(0.1)
@@ -329,6 +361,7 @@ def reset_lobby_state(lobby_id):
             player["score"] = 0
             player["choice"] = None
             player["eliminated"] = False
+            player["ready"] = True if player.get("is_bot") else False
 
         lobby["state"] = "waiting"
         lobby["round"] = 0
@@ -581,6 +614,7 @@ def handle_create_lobby(data):
             "choice": None,
             "eliminated": False,
             "client_id": client_id,
+            "ready": False,
         }
         lobby["host_id"] = request.sid
 
@@ -631,6 +665,16 @@ def handle_join_lobby(data):
         duplicate_sids.extend(duplicates)
         host_replaced = host_replaced or replaced_host
 
+        if is_name_taken(lobby, player_name):
+            leave_room(lobby_id)
+            emit(
+                "error",
+                {
+                    "message": "Dieser Anzeigename ist bereits vergeben. Bitte wähle einen anderen."
+                },
+            )
+            return
+
         while len(lobby["players"]) >= MIN_PLAYERS:
             bot_candidates = [
                 player_id
@@ -650,6 +694,7 @@ def handle_join_lobby(data):
             "choice": None,
             "eliminated": False,
             "client_id": client_id,
+            "ready": False,
         }
 
         if host_replaced or lobby["host_id"] is None:
@@ -693,9 +738,15 @@ def handle_host_start_round(data):
                     },
                 )
                 return
+            if not all_active_players_ready(lobby):
+                emit("error", {"message": "Waiting for every player to be ready."})
+                return
             lobby["state"] = "running"
         elif not lobby.get("awaiting_next_round"):
             emit("error", {"message": "Round already in progress."})
+            return
+        elif not all_active_players_ready(lobby):
+            emit("error", {"message": "Waiting for every player to be ready."})
             return
 
         lobby["awaiting_next_round"] = False
@@ -740,6 +791,20 @@ def handle_fill_with_bots(data):
         for _ in range(bots_to_add):
             create_bot_player(lobby)
 
+    broadcast_lobby_update(lobby_id)
+
+
+@socketio.on("player_ready")
+def handle_player_ready(data):
+    lobby_id = normalize_lobby_code(data.get("lobby_id")) or "DEFAULT"
+    with lobbies_lock:
+        lobby = lobbies.get(lobby_id)
+        if not lobby:
+            return
+        player = lobby["players"].get(request.sid)
+        if not player or player.get("is_bot") or player["eliminated"]:
+            return
+        player["ready"] = True
     broadcast_lobby_update(lobby_id)
 
 
