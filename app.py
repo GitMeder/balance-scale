@@ -599,6 +599,11 @@ def handle_disconnect():
                     assign_new_host(lobby)
                 leave_room(lobby_id)
                 remaining_active = len(get_active_players(lobby))
+                for other in lobby["players"].values():
+                    if other.get("is_bot") or other.get("eliminated"):
+                        continue
+                    other["ready"] = True
+
                 if lobby["state"] == "running" and remaining_active <= 1:
                     winner = check_winner(lobby)
                     if winner:
