@@ -309,6 +309,36 @@ def get_active_rules(eliminations):
     return rules
 
 
+def eliminate_player(lobby_id, lobby, player_id):
+    player = lobby["players"].get(player_id)
+    if not player or player.get("is_bot") or player.get("eliminated"):
+        return None
+
+    previous_eliminations = lobby["eliminations"]
+    player["eliminated"] = True
+    player["choice"] = None
+    player["ready"] = False
+    if player["score"] > -10:
+        player["score"] = -10
+
+    lobby["eliminations"] += 1
+    elimination_number = lobby["eliminations"]
+    unlocked_rules = [
+        ELIMINATION_RULES.get(count)
+        for count in range(previous_eliminations + 1, elimination_number + 1)
+        if ELIMINATION_RULES.get(count)
+    ]
+
+    return {
+        "lobby_id": lobby_id,
+        "name": player["name"],
+        "score": player["score"],
+        "eliminations": elimination_number,
+        "active_rules": get_active_rules(elimination_number),
+        "new_rules": unlocked_rules,
+    }
+
+
 def begin_round(lobby_id):
     with lobbies_lock:
         lobby = lobbies.get(lobby_id)
@@ -556,10 +586,15 @@ def handle_connect():
 @socketio.on("disconnect")
 def handle_disconnect():
     removed_lobby_id = None
+    elimination_notice = None
+    should_evaluate = False
     with lobbies_lock:
         for lobby_id, lobby in lobbies.items():
             if request.sid in lobby["players"]:
-                lobby["players"].pop(request.sid)
+                player = lobby["players"].get(request.sid)
+                if lobby["state"] == "running":
+                    elimination_notice = eliminate_player(lobby_id, lobby, request.sid)
+                lobby["players"].pop(request.sid, None)
                 if lobby["host_id"] == request.sid:
                     assign_new_host(lobby)
                 leave_room(lobby_id)
@@ -575,10 +610,24 @@ def handle_disconnect():
                         }
                         socketio.emit("game_over", payload, room=lobby_id)
                         socketio.start_background_task(reset_lobby_state, lobby_id)
+                elif (
+                    lobby["state"] == "running"
+                    and lobby.get("awaiting_choices")
+                    and all(
+                        p["choice"] is not None
+                        for p in lobby["players"].values()
+                        if not p["eliminated"]
+                    )
+                ):
+                    should_evaluate = True
                 removed_lobby_id = lobby_id
                 break
     if removed_lobby_id:
         broadcast_lobby_update(removed_lobby_id)
+    if elimination_notice:
+        socketio.emit("player_eliminated", elimination_notice, room=removed_lobby_id)
+    if should_evaluate and removed_lobby_id:
+        evaluate_round(removed_lobby_id)
 
 
 @socketio.on("create_lobby")
