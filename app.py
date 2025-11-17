@@ -235,17 +235,20 @@ def get_bot_players(lobby):
     }
 
 
-def remove_duplicate_clients(lobby, client_id, current_sid):
-    """Remove any non-bot players that belong to the same physical client."""
-    if not client_id:
+def remove_duplicate_clients(lobby, client_id, player_name, current_sid):
+    """Remove any non-bot players that appear to be the same attendee."""
+    if not client_id and not player_name:
         return [], False
 
+    normalized_name = normalize_display_name(player_name)
     duplicates = []
     host_replaced = False
     for sid, player in list(lobby["players"].items()):
         if sid == current_sid or player.get("is_bot"):
             continue
-        if player.get("client_id") == client_id:
+        same_client = client_id and player.get("client_id") == client_id
+        same_name = normalized_name and normalize_display_name(player.get("name", "")) == normalized_name
+        if same_client and same_name:
             lobby["players"].pop(sid, None)
             duplicates.append(sid)
             if lobby.get("host_id") == sid:
@@ -715,7 +718,7 @@ def handle_join_lobby(data):
             emit("error", {"message": "Lobby is full or already in progress."})
             return
 
-        duplicates, replaced_host = remove_duplicate_clients(lobby, client_id, request.sid)
+        duplicates, replaced_host = remove_duplicate_clients(lobby, client_id, player_name, request.sid)
         duplicate_sids.extend(duplicates)
         host_replaced = host_replaced or replaced_host
 
