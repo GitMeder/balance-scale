@@ -143,6 +143,7 @@
     playerColors: new Map(),
     colorCursor: 0,
     latestWinners: new Set(),
+    lastSubmissionRound: 0,
   };
 
   if (initialLobbyCode && lobbyCodeInput) {
@@ -234,6 +235,7 @@
 
     state.selectedNumber = value;
     state.hasSubmitted = true;
+    state.lastSubmissionRound = state.roundNumber || state.lastSubmissionRound;
     setGuessEnabled(false);
 
     setStatus("Waiting for other players to submit…");
@@ -914,6 +916,7 @@
     state.lobbyState = "waiting";
     state.selectedNumber = null;
     state.hasSubmitted = false;
+    state.lastSubmissionRound = 0;
     state.awaitingChoices = false;
 
     setJoinButtonsDisabled(false);
@@ -1085,14 +1088,15 @@
       } else {
         setStatus("Waiting for the host to start the first round.");
       }
-    } else if (
-      state.lobbyState === "running" &&
-      state.awaitingChoices &&
-      !state.hasSubmitted &&
-      !state.isEliminated
-    ) {
-      setGuessEnabled(true);
-      setStatus("Round in progress. Make your guess!");
+    } else if (state.lobbyState === "running" && state.awaitingChoices && !state.isEliminated) {
+      const currentRound = state.roundNumber || 0;
+      if (currentRound > state.lastSubmissionRound) {
+        state.hasSubmitted = false;
+      }
+      if (!state.hasSubmitted) {
+        setGuessEnabled(true);
+        setStatus("Round in progress. Make your guess!");
+      }
     }
 
     if (
@@ -1109,6 +1113,7 @@
 
   socket.on("game_started", (payload = {}) => {
     state.hasSubmitted = false;
+    state.lastSubmissionRound = 0;
     state.roundActive = true;
     state.awaitingNextRound = false;
     state.lobbyState = "running";
@@ -1139,6 +1144,7 @@
 
   socket.on("round_result", (payload = {}) => {
     state.hasSubmitted = false;
+    state.lastSubmissionRound = 0;
     state.roundActive = false;
     state.awaitingNextRound = Boolean(payload.awaiting_next_round);
     state.awaitingChoices =
