@@ -269,19 +269,27 @@
       color: #b91c1c;
     }
 
-    .round-details {
-      margin-top: auto;
-      padding-top: 20px;
-      color: #475569;
-      font-size: 0.95rem;
-      line-height: 1.5;
+    .round-panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .round-number-label {
+      font-size: 0.9rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #0ea5e9;
+      font-weight: 600;
     }
 
     .round-breakdown {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 12px;
-      margin-top: 16px;
+      margin-top: 20px;
     }
 
     .round-breakdown .metric-label {
@@ -687,7 +695,10 @@
       </article>
 
       <article class="panel">
-        <h2>Round</h2>
+        <div class="round-panel-header">
+          <h2>Round</h2>
+          <span id="roundNumberLabel" class="round-number-label">Round –</span>
+        </div>
         <div id="numberGridSection" class="number-grid-section hidden">
           <div class="number-grid-header">
             <span class="grid-instruction">Pick your number</span>
@@ -696,25 +707,22 @@
           <div id="numberGrid" class="number-grid" aria-label="Number selection grid"></div>
         </div>
         <div id="resultMessage" class="muted">Waiting for the first round…</div>
-        <div class="round-details">
-          <div id="roundInfo">Round status: idle</div>
-          <div class="round-breakdown">
-            <div>
-              <span class="metric-label">Average guess</span>
-              <span class="metric-value" id="averageValue">–</span>
-            </div>
-            <div>
-              <span class="metric-label">Target (0.8x)</span>
-              <span class="metric-value" id="targetValue">–</span>
-            </div>
+        <div class="round-breakdown">
+          <div>
+            <span class="metric-label">Average guess</span>
+            <span class="metric-value" id="averageValue">–</span>
           </div>
-          <div class="choices-table hidden" id="choicesContainer">
-            <div class="choices-header">
-              <span>Player</span>
-              <span>Choice</span>
-            </div>
-            <div id="choicesBody"></div>
+          <div>
+            <span class="metric-label">Target (0.8x)</span>
+            <span class="metric-value" id="targetValue">–</span>
           </div>
+        </div>
+        <div class="choices-table hidden" id="choicesContainer">
+          <div class="choices-header">
+            <span>Player</span>
+            <span>Choice</span>
+          </div>
+          <div id="choicesBody"></div>
         </div>
       </article>
 

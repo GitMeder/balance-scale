@@ -8,7 +8,7 @@
   const joinLobbyBtn = document.getElementById("joinLobbyBtn");
   const statusMessage = document.getElementById("statusMessage");
   const resultMessage = document.getElementById("resultMessage");
-  const roundInfo = document.getElementById("roundInfo");
+  const roundNumberLabel = document.getElementById("roundNumberLabel");
   const playersList = document.getElementById("playersList");
   const numberGridSection = document.getElementById("numberGridSection");
   const numberGrid = document.getElementById("numberGrid");
@@ -145,6 +145,8 @@
     latestWinners: new Set(),
   };
 
+  refreshRoundNumberLabel();
+
   if (initialLobbyCode && lobbyCodeInput) {
     lobbyCodeInput.value = initialLobbyCode;
   }
@@ -193,6 +195,14 @@
       btn.disabled = !enableButtons;
       btn.classList.toggle("disabled", !enableButtons && !isSelected);
     });
+  }
+
+  function refreshRoundNumberLabel() {
+    if (!roundNumberLabel) {
+      return;
+    }
+    roundNumberLabel.textContent =
+      state.roundNumber > 0 ? `Round ${state.roundNumber}` : "Round –";
   }
 
   function setGuessEnabled(enabled) {
@@ -717,33 +727,18 @@
   }
 
   function updateRoundDetails(payload = {}) {
-    const details = [];
+    const roundValue =
+      typeof payload.round === "number" && Number.isFinite(payload.round)
+        ? payload.round
+        : state.roundNumber;
 
-    const round = typeof payload.round === "number" ? payload.round : state.roundNumber;
-    if (typeof round === "number" && !Number.isNaN(round) && round > 0) {
-      state.roundNumber = round;
-      details.push(`Round ${round}`);
+    if (typeof roundValue === "number" && Number.isFinite(roundValue) && roundValue > 0) {
+      state.roundNumber = roundValue;
+    } else if (state.lobbyState === "waiting" && !state.roundActive) {
+      state.roundNumber = 0;
     }
 
-    if (typeof payload.target === "number") {
-      const formattedTarget = formatNumber(payload.target);
-      if (formattedTarget) {
-        details.push(`Target: ${formattedTarget}`);
-      }
-    }
-
-    if (payload.choices && typeof payload.choices === "object") {
-      const activePlayers = Object.keys(payload.choices).length;
-      if (activePlayers) {
-        details.push(`Choices submitted: ${activePlayers}`);
-      }
-    }
-
-    if (payload.winners && Array.isArray(payload.winners) && payload.winners.length) {
-      details.push(`Winner(s): ${payload.winners.join(", ")}`);
-    }
-
-    roundInfo.textContent = details.length ? details.join(" • ") : "Round status: idle";
+    refreshRoundNumberLabel();
   }
 
   function describeScoreChange(before, after) {
@@ -752,7 +747,7 @@
     }
     const delta = after - before;
     if (Number.isNaN(delta) || delta === 0) {
-      return { text: "No score change this round.", tone: "info" };
+      return { text: "You won this round!", tone: "positive" };
     }
     const absDelta = Math.abs(delta);
     const label = `${absDelta} point${absDelta === 1 ? "" : "s"}`;
@@ -909,6 +904,7 @@
     state.pendingLobbyId = lobbyId;
     state.pendingAction = null;
     state.hasJoinedLobby = true;
+    state.roundNumber = 0;
     state.roundActive = false;
     state.awaitingNextRound = false;
     state.lobbyState = "waiting";
@@ -938,6 +934,7 @@
     state.playerColors = new Map();
     state.colorCursor = 0;
     state.latestWinners = new Set();
+    refreshRoundNumberLabel();
     emitPlayerReady("post-join");
   }
 
@@ -1065,6 +1062,7 @@
     }
     updateHostControls(payload);
     updateRulesList(payload.active_rules);
+    updateRoundDetails(payload);
     if (typeof payload.awaiting_choices === "boolean") {
       state.awaitingChoices = payload.awaiting_choices;
     }
