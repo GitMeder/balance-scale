@@ -20,6 +20,8 @@ socketio = SocketIO(app, async_mode="eventlet", cors_allowed_origins="*")
 lobbies = {}
 lobbies_lock = Lock()
 MIN_PLAYERS = 5
+STARTING_SCORE = 10
+ELIMINATION_SCORE = 0
 MAX_NAME_LENGTH = 24
 LOBBY_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 LOBBY_CODE_LENGTH = 5
@@ -290,7 +292,7 @@ def create_bot_player(lobby):
     lobby["players"][bot_id] = {
         "id": bot_id,
         "name": bot_name,
-        "score": 0,
+        "score": STARTING_SCORE,
         "choice": None,
         "eliminated": False,
         "is_bot": True,
@@ -321,8 +323,8 @@ def eliminate_player(lobby_id, lobby, player_id):
     player["eliminated"] = True
     player["choice"] = None
     player["ready"] = False
-    if player["score"] > -10:
-        player["score"] = -10
+    if player["score"] > ELIMINATION_SCORE:
+        player["score"] = ELIMINATION_SCORE
 
     lobby["eliminations"] += 1
     elimination_number = lobby["eliminations"]
@@ -391,7 +393,7 @@ def reset_lobby_state(lobby_id):
             return
 
         for player in lobby["players"].values():
-            player["score"] = 0
+            player["score"] = STARTING_SCORE
             player["choice"] = None
             player["eliminated"] = False
             player["ready"] = True if player.get("is_bot") else False
@@ -442,6 +444,8 @@ def evaluate_round(lobby_id):
             penalty = base_loss + extra_penalties.get(player_id, 0)
             player["score"] -= penalty
             player["penalty"] = penalty
+            if player["score"] < ELIMINATION_SCORE:
+                player["score"] = ELIMINATION_SCORE
 
         submitted_numbers = {
             player["name"]: player["choice"]
@@ -451,8 +455,9 @@ def evaluate_round(lobby_id):
 
         eliminated_this_round = []
         for player_id, player in active_players.items():
-            if player["score"] <= -10 and not player["eliminated"]:
+            if player["score"] <= ELIMINATION_SCORE and not player["eliminated"]:
                 player["eliminated"] = True
+                player["score"] = ELIMINATION_SCORE
                 lobby["eliminations"] += 1
                 elimination_number = lobby["eliminations"]
                 eliminated_this_round.append(
@@ -667,7 +672,7 @@ def handle_create_lobby(data):
         lobby["players"][request.sid] = {
             "id": request.sid,
             "name": player_name,
-            "score": 0,
+            "score": STARTING_SCORE,
             "choice": None,
             "eliminated": False,
             "client_id": client_id,
@@ -747,7 +752,7 @@ def handle_join_lobby(data):
         lobby["players"][request.sid] = {
             "id": request.sid,
             "name": player_name,
-            "score": 0,
+            "score": STARTING_SCORE,
             "choice": None,
             "eliminated": False,
             "client_id": client_id,

@@ -146,6 +146,7 @@
   };
 
   refreshRoundNumberLabel();
+  updateJoinButtonHighlight();
 
   if (initialLobbyCode && lobbyCodeInput) {
     lobbyCodeInput.value = initialLobbyCode;
@@ -832,6 +833,20 @@
     }
   }
 
+  function updateJoinButtonHighlight() {
+    if (!createLobbyBtn || !joinLobbyBtn) {
+      return;
+    }
+    const hasLobbyCode = Boolean(state.pendingLobbyId);
+    if (hasLobbyCode) {
+      createLobbyBtn.classList.add("secondary-button");
+      joinLobbyBtn.classList.remove("secondary-button");
+    } else {
+      createLobbyBtn.classList.remove("secondary-button");
+      joinLobbyBtn.classList.add("secondary-button");
+    }
+  }
+
   function preparePlayerIdentity() {
     const chosenName = nameInput.value.trim().slice(0, NAME_LIMIT);
     if (!chosenName) {
@@ -868,6 +883,7 @@
       return;
     }
     state.pendingLobbyId = null;
+    updateJoinButtonHighlight();
     state.pendingAction = { type: "create" };
     joinHint.textContent = "Creating a fresh lobby for you…";
     setJoinButtonsDisabled(true);
@@ -892,6 +908,7 @@
       return;
     }
     state.pendingLobbyId = targetLobby;
+    updateJoinButtonHighlight();
     state.pendingAction = { type: "join", lobbyId: targetLobby };
     joinHint.textContent = `Joining lobby ${targetLobby}…`;
     setJoinButtonsDisabled(true);
@@ -909,6 +926,7 @@
 
     state.lobbyId = lobbyId;
     state.pendingLobbyId = lobbyId;
+    updateJoinButtonHighlight();
     state.pendingAction = null;
     state.hasJoinedLobby = true;
     state.roundNumber = 0;
@@ -979,6 +997,7 @@
       const normalized = normalizeLobbyCode(lobbyCodeInput.value).slice(0, MAX_LOBBY_CODE_LENGTH);
       lobbyCodeInput.value = normalized;
       state.pendingLobbyId = normalized || null;
+      updateJoinButtonHighlight();
     });
   }
 
