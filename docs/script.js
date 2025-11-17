@@ -532,6 +532,13 @@
       state.players = players;
     }
 
+    if (state.playerName) {
+      const selfEntry = players.find((player) => player.name === state.playerName);
+      if (selfEntry) {
+        state.isEliminated = Boolean(selfEntry.eliminated);
+      }
+    }
+
     if (!players.length) {
       playersList.innerHTML = `<li class="muted">No players have joined yet.</li>`;
       return;
@@ -1239,6 +1246,7 @@
     state.lobbyState = "finished";
     state.roundActive = false;
     state.awaitingNextRound = false;
+    state.readyAcknowledged = false;
     setGuessEnabled(false);
     const winner =
       payload.winner ||
@@ -1248,7 +1256,7 @@
     }
     const message = winner ? "Game over." : "Game over! Thanks for playing.";
     setResult(message, "positive");
-    setStatus("Game over. Restart the page to join a new session.");
+    setStatus("Game over. Waiting for the host to start a new game.");
     updateHostControls(payload);
   });
 
