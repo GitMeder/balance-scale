@@ -36,6 +36,10 @@
   const chatForm = document.getElementById("chatForm");
   const chatInput = document.getElementById("chatInput");
   const chatSendBtn = document.getElementById("chatSendBtn");
+  const emojiToggleBtn = document.getElementById("emojiToggleBtn");
+  const emojiPicker = document.getElementById("emojiPicker");
+  const chatTypingIndicator = document.getElementById("chatTypingIndicator");
+  const chatTypingText = document.getElementById("chatTypingText");
 
   function normalizeLobbyCode(value) {
     if (typeof value !== "string") {
@@ -52,6 +56,7 @@
       ? window.APP_CONFIG.socketUrl
       : "") || "";
   const initialLobbyCode = normalizeLobbyCode(lobbyFromQuery);
+  const inviteLockedLobbyId = initialLobbyCode || null;
   const socketTarget = serverFromQuery || configServerUrl || undefined;
   const socket = window.io ? window.io(socketTarget || undefined, { autoConnect: true }) : null;
 
@@ -75,6 +80,7 @@
     "Submit a whole number between 0 and 100. Closest to 0.8x the lobby average wins.",
   ];
   const CHAT_MESSAGE_LIMIT = 200;
+  const TYPING_REFRESH_INTERVAL = 2200;
 
   function generateClientId() {
     if (window.crypto?.randomUUID) {
@@ -121,6 +127,35 @@
     return state.playerColors.get(key);
   }
 
+  const EMOJI_CHOICES = [
+    "😀",
+    "😎",
+    "🤖",
+    "🤔",
+    "🙌",
+    "🔥",
+    "🎯",
+    "⚡️",
+    "🌟",
+    "💡",
+    "💥",
+    "🧠",
+    "🕹️",
+    "💬",
+    "🥳",
+    "😅",
+    "😴",
+    "🤯",
+    "🧊",
+    "🚀",
+  ];
+
+  let emojiPickerOpen = false;
+  const typingSignal = {
+    active: false,
+    lastSent: 0,
+  };
+
   const state = {
     lobbyId: null,
     pendingLobbyId: initialLobbyCode || null,
@@ -150,14 +185,32 @@
     colorCursor: 0,
     latestWinners: new Set(),
     chatMessages: [],
+    typingPlayers: [],
+    inviteLocked: Boolean(inviteLockedLobbyId),
   };
 
   refreshRoundNumberLabel();
   updateJoinButtonHighlight();
   setChatAvailability(false);
+  buildEmojiPicker();
 
   if (initialLobbyCode && lobbyCodeInput) {
     lobbyCodeInput.value = initialLobbyCode;
+  }
+
+  if (state.inviteLocked && state.pendingLobbyId && lobbyCodeInput) {
+    lobbyCodeInput.value = state.pendingLobbyId;
+    lobbyCodeInput.readOnly = true;
+    lobbyCodeInput.classList.add("locked-input");
+    lobbyCodeInput.setAttribute("aria-readonly", "true");
+  }
+
+  if (state.inviteLocked && createLobbyBtn) {
+    createLobbyBtn.classList.add("hidden");
+  }
+
+  if (state.inviteLocked && joinHint && state.pendingLobbyId) {
+    joinHint.textContent = `You've been invited to lobby ${state.pendingLobbyId}. Pick a name to join.`;
   }
 
   if (!socket) {
@@ -216,6 +269,104 @@
     if (chatSendBtn) {
       chatSendBtn.disabled = !enabled;
     }
+    if (emojiToggleBtn) {
+      emojiToggleBtn.disabled = !enabled;
+      if (!enabled) {
+        closeEmojiPicker();
+      }
+    }
+    if (!enabled) {
+      emitTypingState(false);
+      clearTypingIndicator();
+    }
+  }
+
+  function resetTypingSignal() {
+    typingSignal.active = false;
+    typingSignal.lastSent = 0;
+  }
+
+  function emitTypingState(active) {
+    if (!socket || !state.lobbyId || !state.hasJoinedLobby) {
+      typingSignal.active = active && typingSignal.active;
+      return;
+    }
+    const now = Date.now();
+    const changed = typingSignal.active !== active;
+    const shouldRefresh = active && now - typingSignal.lastSent > TYPING_REFRESH_INTERVAL;
+    if (!changed && !shouldRefresh) {
+      return;
+    }
+    socket.emit("chat_typing", {
+      lobby_id: state.lobbyId,
+      typing: active,
+    });
+    typingSignal.active = active;
+    typingSignal.lastSent = now;
+  }
+
+  function closeEmojiPicker() {
+    if (!emojiPicker) {
+      emojiPickerOpen = false;
+      return;
+    }
+    emojiPicker.classList.add("hidden");
+    emojiPicker.setAttribute("aria-hidden", "true");
+    if (emojiToggleBtn) {
+      emojiToggleBtn.setAttribute("aria-expanded", "false");
+    }
+    emojiPickerOpen = false;
+  }
+
+  function openEmojiPicker() {
+    if (!emojiPicker || !emojiToggleBtn) {
+      return;
+    }
+    emojiPicker.classList.remove("hidden");
+    emojiPicker.setAttribute("aria-hidden", "false");
+    emojiToggleBtn.setAttribute("aria-expanded", "true");
+    emojiPickerOpen = true;
+  }
+
+  function toggleEmojiPicker() {
+    if (!emojiPicker || !emojiToggleBtn || emojiToggleBtn.disabled) {
+      return;
+    }
+    if (emojiPickerOpen) {
+      closeEmojiPicker();
+    } else {
+      openEmojiPicker();
+    }
+  }
+
+  function insertEmojiAtCursor(emoji) {
+    if (!chatInput || typeof emoji !== "string") {
+      return;
+    }
+    const input = chatInput;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    const before = input.value.slice(0, start);
+    const after = input.value.slice(end);
+    input.value = `${before}${emoji}${after}`;
+    const newPos = start + emoji.length;
+    input.focus();
+    input.setSelectionRange(newPos, newPos);
+  }
+
+  function buildEmojiPicker() {
+    if (!emojiPicker) {
+      return;
+    }
+    emojiPicker.innerHTML = "";
+    EMOJI_CHOICES.forEach((emoji) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "emoji-option";
+      button.dataset.emoji = emoji;
+      button.textContent = emoji;
+      emojiPicker.appendChild(button);
+    });
   }
 
   function normalizeChatMessage(entry) {
@@ -307,6 +458,33 @@
     if (shouldStick) {
       chatMessagesList.scrollTop = chatMessagesList.scrollHeight;
     }
+  }
+
+  function renderTypingIndicator() {
+    if (!chatTypingIndicator || !chatTypingText) {
+      return;
+    }
+    const names = Array.isArray(state.typingPlayers) ? state.typingPlayers : [];
+    if (!names.length) {
+      chatTypingIndicator.classList.add("hidden");
+      chatTypingText.textContent = "";
+      return;
+    }
+    let label = "";
+    if (names.length === 1) {
+      label = `${names[0]} is typing…`;
+    } else if (names.length === 2) {
+      label = `${names[0]} and ${names[1]} are typing…`;
+    } else {
+      label = `${names[0]}, ${names[1]} +${names.length - 2} more are typing…`;
+    }
+    chatTypingText.textContent = label;
+    chatTypingIndicator.classList.remove("hidden");
+  }
+
+  function clearTypingIndicator() {
+    state.typingPlayers = [];
+    renderTypingIndicator();
   }
 
   function refreshRoundNumberLabel() {
@@ -607,7 +785,16 @@
           const eliminated = Boolean(player.eliminated);
           const isHost = Boolean(player.is_host || player.isHost);
           const isBot = Boolean(player.is_bot || player.isBot);
-          return { name, score, eliminated, isHost, isBot };
+          const ready =
+            typeof player.ready === "boolean"
+              ? player.ready
+              : typeof player.is_ready === "boolean"
+                ? player.is_ready
+                : false;
+          const choiceSubmitted = Boolean(
+            player.choice_submitted || player.choiceSubmitted || player.hasSubmitted,
+          );
+          return { name, score, eliminated, isHost, isBot, ready, choiceSubmitted };
         })
         .filter(Boolean);
     }
@@ -619,6 +806,8 @@
         eliminated: false,
         isHost: false,
         isBot: false,
+        ready: false,
+        choiceSubmitted: false,
       }));
     }
 
@@ -700,6 +889,21 @@
         winnerBadge.className = "winner-badge";
         winnerBadge.textContent = "Winner";
         nameSpan.appendChild(winnerBadge);
+      }
+
+      const showRoundStatus =
+        state.awaitingChoices && !player.eliminated && state.lobbyState === "running";
+      if (showRoundStatus) {
+        const statusChip = document.createElement("span");
+        statusChip.className = "player-round-status";
+        if (player.choiceSubmitted) {
+          statusChip.textContent = "Guess locked";
+          statusChip.classList.add("player-round-status--locked");
+        } else {
+          statusChip.textContent = player.isBot ? "Calculating…" : "Choosing…";
+          statusChip.classList.add("player-round-status--pending");
+        }
+        nameSpan.appendChild(statusChip);
       }
 
       const scoreSpan = document.createElement("span");
@@ -861,6 +1065,16 @@
       lobby_id: state.lobbyId,
       message: text,
     });
+    emitTypingState(false);
+  }
+
+  function handleChatInputChange() {
+    if (!chatInput || chatInput.disabled) {
+      emitTypingState(false);
+      return;
+    }
+    const hasValue = Boolean(chatInput.value.trim());
+    emitTypingState(hasValue);
   }
 
   function updateRoundDetails(payload = {}) {
@@ -954,7 +1168,7 @@
   }
 
   function setJoinButtonsDisabled(disabled) {
-    if (createLobbyBtn) {
+    if (createLobbyBtn && !state.inviteLocked) {
       createLobbyBtn.disabled = disabled;
     }
     if (joinLobbyBtn) {
@@ -963,7 +1177,17 @@
   }
 
   function updateJoinButtonHighlight() {
-    if (!createLobbyBtn || !joinLobbyBtn) {
+    if (!joinLobbyBtn) {
+      return;
+    }
+    if (state.inviteLocked) {
+      if (createLobbyBtn) {
+        createLobbyBtn.classList.add("hidden");
+      }
+      joinLobbyBtn.classList.remove("secondary-button");
+      return;
+    }
+    if (!createLobbyBtn) {
       return;
     }
     const hasLobbyCode = Boolean(state.pendingLobbyId);
@@ -1008,6 +1232,12 @@
     if (event) {
       event.preventDefault();
     }
+    if (state.inviteLocked) {
+      if (joinHint && state.pendingLobbyId) {
+        joinHint.textContent = `This invite lets you join lobby ${state.pendingLobbyId}.`;
+      }
+      return;
+    }
     if (!preparePlayerIdentity()) {
       return;
     }
@@ -1030,8 +1260,13 @@
     if (!preparePlayerIdentity()) {
       return;
     }
-    const typedCode = lobbyCodeInput ? normalizeLobbyCode(lobbyCodeInput.value) : "";
-    const targetLobby = typedCode || state.pendingLobbyId;
+    let targetLobby = null;
+    if (state.inviteLocked) {
+      targetLobby = state.pendingLobbyId || inviteLockedLobbyId;
+    } else {
+      const typedCode = lobbyCodeInput ? normalizeLobbyCode(lobbyCodeInput.value) : "";
+      targetLobby = typedCode || state.pendingLobbyId;
+    }
     if (!targetLobby) {
       joinHint.textContent = "Enter a lobby code shared by the host.";
       return;
@@ -1090,6 +1325,7 @@
     state.latestWinners = new Set();
     state.chatMessages = [];
     renderChatMessages(true);
+    clearTypingIndicator();
     if (chatPanel) {
       chatPanel.classList.remove("hidden");
     }
@@ -1111,6 +1347,10 @@
   }
 
   joinForm.addEventListener("submit", (event) => {
+    if (state.inviteLocked) {
+      requestLobbyJoin(event);
+      return;
+    }
     const inputHasCode = lobbyCodeInput && Boolean(normalizeLobbyCode(lobbyCodeInput.value));
     if (inputHasCode || state.pendingLobbyId) {
       requestLobbyJoin(event);
@@ -1119,7 +1359,7 @@
     }
   });
 
-  if (createLobbyBtn) {
+  if (createLobbyBtn && !state.inviteLocked) {
     createLobbyBtn.addEventListener("click", requestLobbyCreation);
   }
 
@@ -1129,6 +1369,10 @@
 
   if (lobbyCodeInput) {
     lobbyCodeInput.addEventListener("input", () => {
+      if (state.inviteLocked) {
+        lobbyCodeInput.value = state.pendingLobbyId || inviteLockedLobbyId || "";
+        return;
+      }
       const normalized = normalizeLobbyCode(lobbyCodeInput.value).slice(0, MAX_LOBBY_CODE_LENGTH);
       lobbyCodeInput.value = normalized;
       state.pendingLobbyId = normalized || null;
@@ -1140,6 +1384,42 @@
     chatForm.addEventListener("submit", submitChatMessage);
   }
 
+  if (chatInput) {
+    chatInput.addEventListener("input", handleChatInputChange);
+    chatInput.addEventListener("focus", handleChatInputChange);
+    chatInput.addEventListener("blur", () => emitTypingState(false));
+  }
+
+  if (emojiToggleBtn) {
+    emojiToggleBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      toggleEmojiPicker();
+    });
+  }
+
+  if (emojiPicker) {
+    emojiPicker.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-emoji]");
+      if (!target) {
+        return;
+      }
+      event.preventDefault();
+      insertEmojiAtCursor(target.dataset.emoji);
+      closeEmojiPicker();
+    });
+  }
+
+  document.addEventListener("click", (event) => {
+    if (!emojiPickerOpen || !emojiPicker || !emojiToggleBtn) {
+      return;
+    }
+    const withinPicker = emojiPicker.contains(event.target);
+    const withinButton = emojiToggleBtn.contains(event.target);
+    if (!withinPicker && !withinButton) {
+      closeEmojiPicker();
+    }
+  });
+
   startRoundBtn.addEventListener("click", emitHostStartRequest);
   nextRoundBtn.addEventListener("click", emitHostStartRequest);
   fillBotsBtn.addEventListener("click", emitFillBotsRequest);
@@ -1147,6 +1427,7 @@
   socket.on("connect", () => {
     state.connected = true;
     state.socketId = socket.id;
+    resetTypingSignal();
     if (state.pendingAction) {
       executePendingAction();
     } else if (state.playerName && state.lobbyId) {
@@ -1183,6 +1464,7 @@
     setStatus(`Disconnected (${reason || "unknown reason"}). Trying to reconnect…`);
     state.readyAcknowledged = false;
     setChatAvailability(false);
+    resetTypingSignal();
   });
 
   socket.on("connected", (payload = {}) => {
@@ -1223,6 +1505,7 @@
     if (chatPanel) {
       chatPanel.classList.remove("hidden");
     }
+    clearTypingIndicator();
     setChatAvailability(true);
   });
 
@@ -1240,6 +1523,16 @@
       state.chatMessages = state.chatMessages.slice(-CHAT_MESSAGE_LIMIT);
     }
     renderChatMessages();
+  });
+
+  socket.on("typing_state", (payload = {}) => {
+    const lobbyId = normalizeLobbyCode(payload.lobby_id || payload.lobbyId || "");
+    if (state.lobbyId && lobbyId && lobbyId !== state.lobbyId) {
+      return;
+    }
+    const names = Array.isArray(payload.players) ? payload.players : [];
+    state.typingPlayers = names.filter((name) => name && name !== state.playerName);
+    renderTypingIndicator();
   });
 
   socket.on("error", (payload = {}) => {

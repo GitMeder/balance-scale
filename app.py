@@ -76,6 +76,8 @@ def serialize_players(lobby, only_active=False):
                 "is_host": player_id == host_id,
                 "eliminated": player["eliminated"],
                 "is_bot": player.get("is_bot", False),
+                "ready": player.get("ready", False),
+                "choice_submitted": player.get("choice") is not None,
             }
         )
     return players
@@ -110,6 +112,32 @@ def broadcast_lobby_update(lobby_id):
 
 def get_lobby_chat(lobby):
     return lobby.setdefault("chat", [])
+
+
+def ensure_typing_tracker(lobby):
+    return lobby.setdefault("typing_players", {})
+
+
+def prune_typing_players(lobby, max_age=5):
+    tracker = ensure_typing_tracker(lobby)
+    cutoff = time.time() - max_age
+    names = []
+    for sid, timestamp in list(tracker.items()):
+        player = lobby["players"].get(sid)
+        if not player or timestamp < cutoff:
+            tracker.pop(sid, None)
+            continue
+        names.append(player["name"])
+    return names
+
+
+def emit_typing_state(lobby_id):
+    with lobbies_lock:
+        lobby = lobbies.get(lobby_id)
+        if not lobby:
+            return
+        names = prune_typing_players(lobby)
+    socketio.emit("typing_state", {"lobby_id": lobby_id, "players": names}, room=lobby_id)
 
 
 def append_chat_message(lobby, player_id, player_name, text, is_bot=False):
@@ -264,6 +292,7 @@ def create_lobby_if_missing(lobby_id):
             "host_id": None,
             "bot_counter": 0,
             "chat": [],
+            "typing_players": {},
         }
     return lobbies[lobby_id]
 
@@ -571,6 +600,9 @@ def evaluate_round(lobby_id):
         else:
             lobby["awaiting_next_round"] = True
 
+        for player in lobby["players"].values():
+            player["choice"] = None
+
     if round_payload:
         round_payload["awaiting_next_round"] = game_over_payload is None
         socketio.emit("round_result", round_payload, room=lobby_id)
@@ -635,6 +667,7 @@ def handle_disconnect():
     removed_lobby_id = None
     elimination_notice = None
     should_evaluate = False
+    typing_update_id = None
     with lobbies_lock:
         for lobby_id, lobby in lobbies.items():
             if request.sid in lobby["players"]:
@@ -642,6 +675,9 @@ def handle_disconnect():
                 if lobby["state"] == "running":
                     elimination_notice = eliminate_player(lobby_id, lobby, request.sid)
                 lobby["players"].pop(request.sid, None)
+                tracker = ensure_typing_tracker(lobby)
+                if tracker.pop(request.sid, None) is not None:
+                    typing_update_id = lobby_id
                 if lobby["host_id"] == request.sid:
                     assign_new_host(lobby)
                 leave_room(lobby_id)
@@ -680,6 +716,8 @@ def handle_disconnect():
         socketio.emit("player_eliminated", elimination_notice, room=removed_lobby_id)
     if should_evaluate and removed_lobby_id:
         evaluate_round(removed_lobby_id)
+    if typing_update_id:
+        emit_typing_state(typing_update_id)
 
 
 @socketio.on("create_lobby")
@@ -910,6 +948,7 @@ def handle_send_chat_message(data):
     if len(message_text) > CHAT_MESSAGE_MAX_LENGTH:
         message_text = message_text[:CHAT_MESSAGE_MAX_LENGTH]
 
+    should_emit_typing = False
     with lobbies_lock:
         lobby = lobbies.get(lobby_id)
         if not lobby:
@@ -927,10 +966,34 @@ def handle_send_chat_message(data):
             message_text,
             player.get("is_bot", False),
         )
+        tracker = ensure_typing_tracker(lobby)
+        if tracker.pop(request.sid, None) is not None:
+            should_emit_typing = True
 
     payload = dict(entry)
     payload["lobby_id"] = lobby_id
     socketio.emit("chat_message", payload, room=lobby_id)
+    if should_emit_typing:
+        emit_typing_state(lobby_id)
+
+
+@socketio.on("chat_typing")
+def handle_chat_typing(data):
+    lobby_id = normalize_lobby_code(data.get("lobby_id")) or "DEFAULT"
+    is_typing = bool(data.get("typing"))
+    with lobbies_lock:
+        lobby = lobbies.get(lobby_id)
+        if not lobby:
+            return
+        player = lobby["players"].get(request.sid)
+        if not player or player.get("is_bot") or player["eliminated"]:
+            return
+        tracker = ensure_typing_tracker(lobby)
+        if is_typing:
+            tracker[request.sid] = time.time()
+        else:
+            tracker.pop(request.sid, None)
+    emit_typing_state(lobby_id)
 
 
 @socketio.on("player_ready")
@@ -975,6 +1038,7 @@ def handle_submit_number(data):
         return
 
     should_evaluate = False
+    should_broadcast_choice = False
 
     with lobbies_lock:
         lobby = lobbies.get(lobby_id)
@@ -999,7 +1063,11 @@ def handle_submit_number(data):
             if not p["eliminated"]
         ):
             should_evaluate = True
+        else:
+            should_broadcast_choice = True
 
+    if should_broadcast_choice:
+        broadcast_lobby_update(lobby_id)
     if should_evaluate:
         evaluate_round(lobby_id)
 
