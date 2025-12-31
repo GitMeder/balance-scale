@@ -31,6 +31,11 @@
   const lobbyCodeBanner = document.getElementById("lobbyCodeBanner");
   const lobbyCodeValue = document.getElementById("lobbyCodeValue");
   const copyLobbyLinkBtn = document.getElementById("copyLobbyLinkBtn");
+  const chatPanel = document.getElementById("chatPanel");
+  const chatMessagesList = document.getElementById("chatMessages");
+  const chatForm = document.getElementById("chatForm");
+  const chatInput = document.getElementById("chatInput");
+  const chatSendBtn = document.getElementById("chatSendBtn");
 
   function normalizeLobbyCode(value) {
     if (typeof value !== "string") {
@@ -69,6 +74,7 @@
   const DEFAULT_RULES = [
     "Submit a whole number between 0 and 100. Closest to 0.8x the lobby average wins.",
   ];
+  const CHAT_MESSAGE_LIMIT = 200;
 
   function generateClientId() {
     if (window.crypto?.randomUUID) {
@@ -143,10 +149,12 @@
     playerColors: new Map(),
     colorCursor: 0,
     latestWinners: new Set(),
+    chatMessages: [],
   };
 
   refreshRoundNumberLabel();
   updateJoinButtonHighlight();
+  setChatAvailability(false);
 
   if (initialLobbyCode && lobbyCodeInput) {
     lobbyCodeInput.value = initialLobbyCode;
@@ -196,6 +204,109 @@
       btn.disabled = !enableButtons;
       btn.classList.toggle("disabled", !enableButtons && !isSelected);
     });
+  }
+
+  function setChatAvailability(enabled) {
+    if (chatInput) {
+      chatInput.disabled = !enabled;
+      if (!enabled) {
+        chatInput.value = "";
+      }
+    }
+    if (chatSendBtn) {
+      chatSendBtn.disabled = !enabled;
+    }
+  }
+
+  function normalizeChatMessage(entry) {
+    if (!entry || typeof entry !== "object") {
+      return null;
+    }
+    const text = typeof entry.message === "string" ? entry.message.trim() : "";
+    if (!text) {
+      return null;
+    }
+    const timestamp =
+      typeof entry.timestamp === "number" && Number.isFinite(entry.timestamp)
+        ? entry.timestamp
+        : Date.now();
+    return {
+      id: entry.id || `${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
+      name: typeof entry.name === "string" && entry.name.trim() ? entry.name : "Player",
+      playerId: entry.player_id || entry.playerId || null,
+      message: text,
+      timestamp,
+    };
+  }
+
+  function formatChatTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function isNearBottom(element) {
+    if (!element) {
+      return true;
+    }
+    const threshold = 48;
+    return element.scrollHeight - element.scrollTop - element.clientHeight < threshold;
+  }
+
+  function renderChatMessages(forceScroll = false) {
+    if (!chatMessagesList) {
+      return;
+    }
+
+    const shouldStick = forceScroll || isNearBottom(chatMessagesList);
+    chatMessagesList.innerHTML = "";
+
+    if (!state.chatMessages.length) {
+      const empty = document.createElement("div");
+      empty.className = "chat-empty";
+      empty.textContent = "No messages yet.";
+      chatMessagesList.appendChild(empty);
+      return;
+    }
+
+    state.chatMessages.forEach((entry) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "chat-message";
+      if (
+        (entry.playerId && socket && entry.playerId === socket.id) ||
+        entry.name === state.playerName
+      ) {
+        wrapper.classList.add("chat-message-self");
+      }
+
+      const header = document.createElement("div");
+      header.className = "chat-message-header";
+
+      const author = document.createElement("span");
+      author.className = "chat-author";
+      author.textContent = entry.name;
+
+      const timestamp = document.createElement("span");
+      timestamp.className = "chat-timestamp";
+      timestamp.textContent = formatChatTimestamp(entry.timestamp);
+
+      header.appendChild(author);
+      header.appendChild(timestamp);
+
+      const body = document.createElement("div");
+      body.className = "chat-text";
+      body.textContent = entry.message;
+
+      wrapper.appendChild(header);
+      wrapper.appendChild(body);
+      chatMessagesList.appendChild(wrapper);
+    });
+
+    if (shouldStick) {
+      chatMessagesList.scrollTop = chatMessagesList.scrollHeight;
+    }
   }
 
   function refreshRoundNumberLabel() {
@@ -734,6 +845,24 @@
     socket.emit("fill_with_bots", { lobby_id: state.lobbyId });
   }
 
+  function submitChatMessage(event) {
+    if (event) {
+      event.preventDefault();
+    }
+    if (!socket || !state.lobbyId || !chatInput || chatInput.disabled) {
+      return;
+    }
+    const text = chatInput.value.trim();
+    if (!text) {
+      return;
+    }
+    chatInput.value = "";
+    socket.emit("send_chat_message", {
+      lobby_id: state.lobbyId,
+      message: text,
+    });
+  }
+
   function updateRoundDetails(payload = {}) {
     const roundValue =
       typeof payload.round === "number" && Number.isFinite(payload.round)
@@ -959,6 +1088,12 @@
     state.playerColors = new Map();
     state.colorCursor = 0;
     state.latestWinners = new Set();
+    state.chatMessages = [];
+    renderChatMessages(true);
+    if (chatPanel) {
+      chatPanel.classList.remove("hidden");
+    }
+    setChatAvailability(true);
     refreshRoundNumberLabel();
     emitPlayerReady("post-join");
   }
@@ -1001,6 +1136,10 @@
     });
   }
 
+  if (chatForm) {
+    chatForm.addEventListener("submit", submitChatMessage);
+  }
+
   startRoundBtn.addEventListener("click", emitHostStartRequest);
   nextRoundBtn.addEventListener("click", emitHostStartRequest);
   fillBotsBtn.addEventListener("click", emitFillBotsRequest);
@@ -1017,6 +1156,9 @@
       setStatus("Connected! Choose a name to join.");
     }
     updateHostControls();
+    if (state.hasJoinedLobby) {
+      setChatAvailability(true);
+    }
   });
 
   socket.on("connect_error", (error) => {
@@ -1040,6 +1182,7 @@
     state.connected = false;
     setStatus(`Disconnected (${reason || "unknown reason"}). Trying to reconnect…`);
     state.readyAcknowledged = false;
+    setChatAvailability(false);
   });
 
   socket.on("connected", (payload = {}) => {
@@ -1064,6 +1207,39 @@
       return;
     }
     handleJoinSuccess(lobbyId);
+  });
+
+  socket.on("chat_history", (payload = {}) => {
+    const lobbyId = normalizeLobbyCode(payload.lobby_id || payload.lobbyId || "");
+    if (!state.lobbyId || (lobbyId && lobbyId !== state.lobbyId)) {
+      return;
+    }
+    const incoming = Array.isArray(payload.messages) ? payload.messages : [];
+    state.chatMessages = incoming
+      .map(normalizeChatMessage)
+      .filter(Boolean)
+      .slice(-CHAT_MESSAGE_LIMIT);
+    renderChatMessages(true);
+    if (chatPanel) {
+      chatPanel.classList.remove("hidden");
+    }
+    setChatAvailability(true);
+  });
+
+  socket.on("chat_message", (payload = {}) => {
+    const lobbyId = normalizeLobbyCode(payload.lobby_id || payload.lobbyId || "");
+    if (state.lobbyId && lobbyId && lobbyId !== state.lobbyId) {
+      return;
+    }
+    const message = normalizeChatMessage(payload);
+    if (!message) {
+      return;
+    }
+    state.chatMessages.push(message);
+    if (state.chatMessages.length > CHAT_MESSAGE_LIMIT) {
+      state.chatMessages = state.chatMessages.slice(-CHAT_MESSAGE_LIMIT);
+    }
+    renderChatMessages();
   });
 
   socket.on("error", (payload = {}) => {
@@ -1237,7 +1413,7 @@
         ? [payload.new_rule]
         : [];
     const ruleNotice = newRules.length
-      ? `New rule${newRules.length > 1 ? "s" : ""} unlocked: ${newRules.join("; ")}`
+      ? `${newRules.join("; ")}`
       : null;
 
     if (eliminatedName === state.playerName) {

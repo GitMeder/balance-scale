@@ -11,11 +11,36 @@
 
   <script>
     (function () {
-      var qp = new URLSearchParams(location.search);
-      var fromQuery = qp.get("server") || "";
-      window.APP_CONFIG = {
-        socketUrl: fromQuery || "https://balance-scale-mlpm.onrender.com"
-      };
+      var params = new URLSearchParams(window.location.search);
+      var serverOverride = params.get("server") || "";
+      var remoteFallback = "https://balance-scale-mlpm.onrender.com";
+      var origin = window.location.origin || "";
+      var hostname = (window.location.hostname || "").toLowerCase();
+      var isLocalhost =
+        hostname === "localhost" ||
+        hostname === "127.0.0.1" ||
+        hostname === "[::1]" ||
+        hostname.endsWith(".local");
+      var isGithubPages = hostname.endsWith(".github.io");
+      var resolvedServer = serverOverride;
+
+      if (!resolvedServer) {
+        if (window.location.protocol === "file:") {
+          resolvedServer = "http://localhost:5000";
+        } else if (isLocalhost) {
+          resolvedServer = origin || "http://localhost:5000";
+        } else if (hostname === "balance-scale-mlpm.onrender.com") {
+          resolvedServer = origin || remoteFallback;
+        } else if (isGithubPages) {
+          resolvedServer = remoteFallback;
+        } else if (origin) {
+          resolvedServer = origin;
+        } else {
+          resolvedServer = remoteFallback;
+        }
+      }
+
+      window.APP_CONFIG = { socketUrl: resolvedServer };
     })();
   </script>
 
@@ -510,6 +535,93 @@
       gap: 12px;
     }
 
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 320px;
+    }
+
+    .chat-messages {
+      flex: 1;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 12px;
+      background: #f8fafc;
+      overflow-y: auto;
+      max-height: 260px;
+    }
+
+    .chat-message {
+      display: flex;
+      flex-direction: column;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+      margin-bottom: 8px;
+    }
+
+    .chat-message-self {
+      border-color: #38bdf8;
+      background: #e0f2fe;
+    }
+
+    .chat-message-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: #475569;
+      margin-bottom: 4px;
+      gap: 8px;
+    }
+
+    .chat-author {
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    .chat-timestamp {
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+
+    .chat-text {
+      color: #0f172a;
+      font-size: 0.95rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .chat-form {
+      display: flex;
+      gap: 8px;
+      margin-top: auto;
+    }
+
+    .chat-form input {
+      flex: 1;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      padding: 10px 12px;
+      font-size: 0.95rem;
+      font-family: inherit;
+    }
+
+    .chat-form input:focus {
+      outline: none;
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+    }
+
+    .chat-empty {
+      text-align: center;
+      color: #94a3b8;
+      font-size: 0.9rem;
+      padding: 12px 0;
+    }
+
     .modal-overlay {
       position: fixed;
       inset: 0;
@@ -739,6 +851,24 @@
           </button>
         </div>
         <p class="muted small-text" id="hostHint"></p>
+      </article>
+
+      <article class="panel chat-panel hidden" id="chatPanel">
+        <h2>Lobby chat</h2>
+        <div class="chat-messages" id="chatMessages">
+          <div class="chat-empty">No messages yet.</div>
+        </div>
+        <form id="chatForm" class="chat-form" autocomplete="off">
+          <input
+            id="chatInput"
+            type="text"
+            name="chatMessage"
+            placeholder="Say something..."
+            maxlength="280"
+            disabled
+          />
+          <button type="submit" id="chatSendBtn">Send</button>
+        </form>
       </article>
     </section>
   </div>

@@ -4,6 +4,7 @@ eventlet.monkey_patch()
 import os
 import math
 import random
+import time
 import uuid
 from collections import defaultdict
 from threading import Lock
@@ -26,6 +27,8 @@ MAX_NAME_LENGTH = 24
 LOBBY_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 LOBBY_CODE_LENGTH = 5
 CLIENT_ID_MAX_LENGTH = 64
+CHAT_MESSAGE_MAX_LENGTH = 280
+CHAT_HISTORY_LIMIT = 100
 
 BASE_RULE = "Submit a whole number between 0 and 100. Closest to 0.8x the average wins."
 ELIMINATION_RULES = {
@@ -103,6 +106,41 @@ def broadcast_lobby_update(lobby_id):
             "all_players_ready": all_active_players_ready(lobby),
         }
     socketio.emit("lobby_update", payload, room=lobby_id)
+
+
+def get_lobby_chat(lobby):
+    return lobby.setdefault("chat", [])
+
+
+def append_chat_message(lobby, player_id, player_name, text, is_bot=False):
+    entry = {
+        "id": uuid.uuid4().hex,
+        "player_id": player_id,
+        "name": player_name,
+        "message": text,
+        "timestamp": int(time.time() * 1000),
+        "is_bot": is_bot,
+    }
+    chat_log = get_lobby_chat(lobby)
+    chat_log.append(entry)
+    if len(chat_log) > CHAT_HISTORY_LIMIT:
+        lobby["chat"] = chat_log[-CHAT_HISTORY_LIMIT:]
+    return entry
+
+
+def emit_chat_history(lobby_id, target_sid):
+    if not target_sid:
+        return
+    with lobbies_lock:
+        lobby = lobbies.get(lobby_id)
+        if not lobby:
+            return
+        history = [dict(message) for message in get_lobby_chat(lobby)]
+    socketio.emit(
+        "chat_history",
+        {"lobby_id": lobby_id, "messages": history[-CHAT_HISTORY_LIMIT:]},
+        room=target_sid,
+    )
 
 
 def assign_new_host(lobby):
@@ -225,6 +263,7 @@ def create_lobby_if_missing(lobby_id):
             "awaiting_next_round": False,
             "host_id": None,
             "bot_counter": 0,
+            "chat": [],
         }
     return lobbies[lobby_id]
 
@@ -681,6 +720,7 @@ def handle_create_lobby(data):
         lobby["host_id"] = request.sid
 
     emit("lobby_created", {"lobby_id": lobby_id}, room=request.sid)
+    emit_chat_history(lobby_id, request.sid)
     broadcast_lobby_update(lobby_id)
 
 
@@ -763,6 +803,7 @@ def handle_join_lobby(data):
             lobby["host_id"] = request.sid
 
     emit("joined_lobby", {"lobby_id": lobby_id}, room=request.sid)
+    emit_chat_history(lobby_id, request.sid)
     broadcast_lobby_update(lobby_id)
 
     for sid in duplicate_sids:
@@ -854,6 +895,42 @@ def handle_fill_with_bots(data):
             create_bot_player(lobby)
 
     broadcast_lobby_update(lobby_id)
+
+
+@socketio.on("send_chat_message")
+def handle_send_chat_message(data):
+    lobby_id = normalize_lobby_code(data.get("lobby_id")) or "DEFAULT"
+    raw_message = data.get("message", "")
+    message_text = str(raw_message).strip()
+
+    if not message_text:
+        emit("error", {"message": "Message cannot be empty."})
+        return
+
+    if len(message_text) > CHAT_MESSAGE_MAX_LENGTH:
+        message_text = message_text[:CHAT_MESSAGE_MAX_LENGTH]
+
+    with lobbies_lock:
+        lobby = lobbies.get(lobby_id)
+        if not lobby:
+            emit("error", {"message": "Lobby not found."})
+            return
+        player = lobby["players"].get(request.sid)
+        if not player:
+            emit("error", {"message": "Join the lobby before sending messages."})
+            return
+
+        entry = append_chat_message(
+            lobby,
+            request.sid,
+            player["name"],
+            message_text,
+            player.get("is_bot", False),
+        )
+
+    payload = dict(entry)
+    payload["lobby_id"] = lobby_id
+    socketio.emit("chat_message", payload, room=lobby_id)
 
 
 @socketio.on("player_ready")
